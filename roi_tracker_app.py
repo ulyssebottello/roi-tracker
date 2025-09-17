@@ -49,6 +49,8 @@ class ROIDataProcessor:
         self.processed_data = None
         self.consolidated_data = None
         self.events_analysis = {}
+        self.filtered_data = None
+        self.date_filter_applied = False
         
     def validate_data_structure(self) -> Tuple[bool, str]:
         """Valide la structure du DataFrame"""
@@ -226,26 +228,98 @@ class ROIDataProcessor:
                 
         return type_mapping
     
-    def get_global_metrics(self) -> Dict:
-        """Calcule les métriques globales"""
+    def get_date_range(self) -> Tuple[datetime, datetime]:
+        """Retourne la plage de dates disponible dans les données"""
         if self.processed_data is None:
             self.processed_data = self.parse_values_column()
             
         # Conversion de la colonne date
         self.processed_data['date'] = pd.to_datetime(self.processed_data['date'], errors='coerce')
         
-        total_events = len(self.processed_data)
-        unique_events = self.processed_data['name'].nunique()
+        # Normaliser les timezones pour éviter les erreurs de comparaison
+        if self.processed_data['date'].dt.tz is not None:
+            self.processed_data['date'] = self.processed_data['date'].dt.tz_convert(None)
+        
+        min_date = self.processed_data['date'].min()
+        max_date = self.processed_data['date'].max()
+        
+        return min_date, max_date
+    
+    def apply_date_filter(self, start_date: datetime, end_date: datetime):
+        """Applique un filtre de date aux données"""
+        if self.processed_data is None:
+            self.processed_data = self.parse_values_column()
+            
+        # Conversion de la colonne date si pas déjà fait
+        self.processed_data['date'] = pd.to_datetime(self.processed_data['date'], errors='coerce')
+        
+        # Normaliser les timezones pour éviter les erreurs de comparaison
+        # Convertir en timezone naive si les dates ont une timezone
+        if self.processed_data['date'].dt.tz is not None:
+            self.processed_data['date'] = self.processed_data['date'].dt.tz_convert(None)
+        
+        # S'assurer que les dates de filtrage sont aussi timezone naive
+        if start_date.tzinfo is not None:
+            start_date = start_date.replace(tzinfo=None)
+        if end_date.tzinfo is not None:
+            end_date = end_date.replace(tzinfo=None)
+        
+        # Filtrer les données selon la période
+        mask = (
+            (self.processed_data['date'] >= start_date) & 
+            (self.processed_data['date'] <= end_date)
+        )
+        
+        self.filtered_data = self.processed_data[mask].copy()
+        self.date_filter_applied = True
+        
+        # Filtrer aussi les données consolidées si elles existent
+        if self.consolidated_data is not None:
+            consolidated_dates = pd.to_datetime(self.consolidated_data['date'], errors='coerce')
+            
+            # Normaliser les timezones pour les données consolidées aussi
+            if consolidated_dates.dt.tz is not None:
+                consolidated_dates = consolidated_dates.dt.tz_convert(None)
+                
+            consolidated_mask = (
+                (consolidated_dates >= start_date) & 
+                (consolidated_dates <= end_date)
+            )
+            self.consolidated_data = self.consolidated_data[consolidated_mask].copy()
+    
+    def get_active_data(self) -> pd.DataFrame:
+        """Retourne les données actives (filtrées ou complètes)"""
+        if self.date_filter_applied and self.filtered_data is not None:
+            return self.filtered_data
+        else:
+            if self.processed_data is None:
+                self.processed_data = self.parse_values_column()
+            return self.processed_data
+    
+    def get_global_metrics(self) -> Dict:
+        """Calcule les métriques globales"""
+        # Utiliser les données actives (filtrées ou complètes)
+        active_data = self.get_active_data()
+        
+        # Conversion de la colonne date
+        active_data['date'] = pd.to_datetime(active_data['date'], errors='coerce')
+        
+        # Normaliser les timezones pour éviter les erreurs de comparaison
+        if active_data['date'].dt.tz is not None:
+            active_data['date'] = active_data['date'].dt.tz_convert(None)
+        
+        total_events = len(active_data)
+        unique_events = active_data['name'].nunique()
         date_range = (
-            self.processed_data['date'].min(),
-            self.processed_data['date'].max()
+            active_data['date'].min(),
+            active_data['date'].max()
         )
         
         # Répartition par type d'événement
-        event_distribution = self.processed_data['name'].value_counts()
+        event_distribution = active_data['name'].value_counts()
         
         # Répartition par type de valeur
-        value_type_distribution = self.processed_data['value_key'].value_counts()
+        value_type_distribution = active_data['value_key'].value_counts()
         
         return {
             'total_events': total_events,
@@ -257,12 +331,12 @@ class ROIDataProcessor:
     
     def analyze_selected_events(self, selected_events: List[str]) -> Dict:
         """Analyse les événements sélectionnés"""
-        if self.processed_data is None:
-            self.processed_data = self.parse_values_column()
+        # Utiliser les données actives (filtrées ou complètes)
+        active_data = self.get_active_data()
             
         # Filtrage des données
-        filtered_data = self.processed_data[
-            self.processed_data['value_key'].isin(selected_events)
+        filtered_data = active_data[
+            active_data['value_key'].isin(selected_events)
         ].copy()
         
         if filtered_data.empty:
@@ -297,16 +371,26 @@ class ROIDataProcessor:
         avg_transaction = price_data['value_numeric'].mean()
         transaction_count = len(price_data)
         
-        # Évolution temporelle du CA
-        price_data_sorted = price_data.sort_values('date')
-        price_data_sorted['cumulative_revenue'] = price_data_sorted['value_numeric'].cumsum()
+        # Évolution temporelle du CA - grouper par jour pour éviter les points multiples
+        # Grouper par jour et sommer les revenus
+        daily_revenue = price_data.groupby(
+            price_data['date'].dt.date
+        )['value_numeric'].sum().reset_index()
+        daily_revenue.columns = ['date', 'daily_revenue']
+        
+        # Convertir la date en datetime et trier
+        daily_revenue['date'] = pd.to_datetime(daily_revenue['date'])
+        daily_revenue = daily_revenue.sort_values('date')
+        
+        # Calculer le CA cumulé par jour
+        daily_revenue['cumulative_revenue'] = daily_revenue['daily_revenue'].cumsum()
         
         return {
             'type': 'price',
             'total_revenue': total_revenue,
             'avg_transaction': avg_transaction,
             'transaction_count': transaction_count,
-            'temporal_data': price_data_sorted,
+            'temporal_data': daily_revenue,
             'distribution': price_data['value_numeric'].value_counts().sort_index()
         }
     
@@ -335,6 +419,37 @@ class ROIDataProcessor:
         }
 
 
+def configure_date_axis(fig, dates_data):
+    """Configure intelligemment l'axe des dates pour éviter la répétition des labels"""
+    num_days = len(dates_data) if hasattr(dates_data, '__len__') else len(set(dates_data))
+    
+    if num_days <= 2:
+        # Pour 1-2 jours, afficher les dates disponibles sans répétition
+        unique_dates = sorted(set(dates_data))
+        fig.update_xaxes(
+            tickmode='array',
+            tickvals=unique_dates,
+            ticktext=[pd.to_datetime(d).strftime('%d/%m/%Y') for d in unique_dates],
+            tickformat='%d/%m/%Y'
+        )
+    elif num_days <= 7:
+        # Pour une semaine, un tick par jour
+        fig.update_xaxes(
+            tickformat='%d/%m',
+            tickmode='linear',
+            dtick='D1'
+        )
+    else:
+        # Pour plus de 7 jours, espacement automatique intelligent
+        fig.update_xaxes(
+            tickformat='%d/%m',
+            tickmode='auto',
+            nticks=min(10, num_days)
+        )
+    
+    return fig
+
+
 def load_and_validate_data(uploaded_file) -> Tuple[Optional[ROIDataProcessor], str]:
     """Charge et valide le fichier uploadé"""
     try:
@@ -354,6 +469,52 @@ def load_and_validate_data(uploaded_file) -> Tuple[Optional[ROIDataProcessor], s
         
     except Exception as e:
         return None, f"❌ Erreur lors du chargement: {str(e)}"
+
+
+def display_period_picker(processor: ROIDataProcessor) -> Tuple[datetime, datetime]:
+    """Affiche le sélecteur de période et retourne les dates sélectionnées"""
+    # Obtenir la plage de dates disponible dans le fichier
+    min_date, max_date = processor.get_date_range()
+    
+    if pd.isna(min_date) or pd.isna(max_date):
+        st.error("❌ Impossible de déterminer la plage de dates du fichier")
+        return None, None
+    
+    # Convertir en dates Python pour Streamlit
+    min_date_py = min_date.date()
+    max_date_py = max_date.date()
+    
+    # Interface de sélection simple
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        start_date = st.date_input(
+            "Date de début",
+            value=min_date_py,
+            min_value=min_date_py,
+            max_value=max_date_py,
+            key="start_date"
+        )
+    
+    with col2:
+        end_date = st.date_input(
+            "Date de fin", 
+            value=max_date_py,
+            min_value=min_date_py,
+            max_value=max_date_py,
+            key="end_date"
+        )
+    
+    # Validation de la sélection
+    if start_date > end_date:
+        st.error("❌ La date de début doit être antérieure à la date de fin")
+        return None, None
+    
+    # Conversion en datetime pour le filtrage
+    start_datetime = datetime.combine(start_date, datetime.min.time())
+    end_datetime = datetime.combine(end_date, datetime.max.time())
+    
+    return start_datetime, end_datetime
 
 
 def display_global_metrics(processor: ROIDataProcessor):
@@ -426,10 +587,14 @@ def display_global_metrics(processor: ROIDataProcessor):
     # Évolution temporelle
     st.subheader("Évolution temporelle des événements")
     if processor.processed_data is not None:
+        # Grouper par jour complet pour éviter les points multiples dans la journée
         daily_events = processor.processed_data.groupby(
             processor.processed_data['date'].dt.date
         ).size().reset_index()
         daily_events.columns = ['date', 'count']
+        
+        # Convertir la date en datetime pour un meilleur affichage
+        daily_events['date'] = pd.to_datetime(daily_events['date'])
         
         fig_timeline = px.line(
             daily_events, 
@@ -438,6 +603,8 @@ def display_global_metrics(processor: ROIDataProcessor):
             title="Nombre d'événements par jour",
             labels={'count': 'Nombre d\'événements', 'date': 'Date'}
         )
+        # Configurer l'axe des dates intelligemment
+        configure_date_axis(fig_timeline, daily_events['date'])
         st.plotly_chart(fig_timeline, use_container_width=True)
 
 
@@ -446,11 +613,11 @@ def display_event_explorer(processor: ROIDataProcessor):
     st.markdown('<div class="section-header">🔍 Explorateur d\'Événements</div>', 
                 unsafe_allow_html=True)
     
-    if processor.processed_data is None:
-        processor.processed_data = processor.parse_values_column()
+    # Utiliser les données actives (filtrées ou complètes)
+    active_data = processor.get_active_data()
     
     # Liste des noms d'événements disponibles (pas les value_key, mais les 'name')
-    available_event_names = sorted(processor.processed_data['name'].unique())
+    available_event_names = sorted(active_data['name'].unique())
     
     st.subheader("Sélection des événements à analyser")
     
@@ -467,7 +634,7 @@ def display_event_explorer(processor: ROIDataProcessor):
     for event_name in available_event_names:
         with cols[col_idx % 2]:
             # Comptage du nombre d'occurrences pour info
-            event_count = len(processor.processed_data[processor.processed_data['name'] == event_name])
+            event_count = len(active_data[active_data['name'] == event_name])
             
             if st.checkbox(f"{event_name} ({event_count} événements)", key=f"event_{event_name}"):
                 selected_event_names.append(event_name)
@@ -485,13 +652,12 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
     st.markdown('<div class="section-header">📈 Analyse des Événements Sélectionnés</div>', 
                 unsafe_allow_html=True)
     
-    # S'assurer que les données sont parsées
-    if processor.processed_data is None:
-        processor.processed_data = processor.parse_values_column()
+    # Utiliser les données actives (filtrées ou complètes)
+    active_data = processor.get_active_data()
     
     # Filtrage des données par nom d'événement
-    filtered_data = processor.processed_data[
-        processor.processed_data['name'].isin(selected_event_names)
+    filtered_data = active_data[
+        active_data['name'].isin(selected_event_names)
     ].copy()
     
     if filtered_data.empty:
@@ -500,6 +666,10 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
     
     # Conversion des dates si pas déjà fait
     filtered_data['date'] = pd.to_datetime(filtered_data['date'], errors='coerce')
+    
+    # Normaliser les timezones pour éviter les erreurs de comparaison
+    if filtered_data['date'].dt.tz is not None:
+        filtered_data['date'] = filtered_data['date'].dt.tz_convert(None)
     
     # === MÉTRIQUES PRINCIPALES ===
     total_events = len(filtered_data)
@@ -544,6 +714,9 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
         ).size().reset_index()
         daily_simple.columns = ['date', 'count']
         
+        # Convertir la date en datetime pour un meilleur affichage
+        daily_simple['date'] = pd.to_datetime(daily_simple['date'])
+        
         fig_timeline = px.line(
             daily_simple,
             x='date',
@@ -551,8 +724,14 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
             title=f"Évolution - {selected_event_names[0]}",
             labels={'count': 'Nombre d\'événements', 'date': 'Date'}
         )
+        # Configurer l'axe des dates intelligemment
+        configure_date_axis(fig_timeline, daily_simple['date'])
+        
     else:
         # Plusieurs événements : graphique empilé
+        # Convertir la date en datetime pour un meilleur affichage
+        daily_events['date'] = pd.to_datetime(daily_events['date'])
+        
         daily_melted = daily_events.melt(
             id_vars=['date'], 
             var_name='event_name', 
@@ -567,6 +746,8 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
             title="Évolution par type d'événement",
             labels={'count': 'Nombre d\'événements', 'date': 'Date'}
         )
+        # Configurer l'axe des dates intelligemment
+        configure_date_axis(fig_timeline, daily_events['date'])
     
     st.plotly_chart(fig_timeline, use_container_width=True)
     
@@ -614,25 +795,43 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
         # Évolution du CA cumulé
         st.subheader("📈 Évolution du Chiffre d'Affaires Cumulé")
         
-        price_data_sorted = price_data.sort_values('date')
-        price_data_sorted['cumulative_revenue'] = price_data_sorted['value_numeric'].cumsum()
+        # Grouper les revenus par jour complet pour éviter les points multiples dans la journée
+        daily_revenue = price_data.groupby(
+            price_data['date'].dt.date
+        )['value_numeric'].sum().reset_index()
+        daily_revenue.columns = ['date', 'daily_revenue']
+        
+        # Convertir la date en datetime pour un meilleur affichage
+        daily_revenue['date'] = pd.to_datetime(daily_revenue['date'])
+        
+        # Calculer le CA cumulé par jour
+        daily_revenue = daily_revenue.sort_values('date')
+        daily_revenue['cumulative_revenue'] = daily_revenue['daily_revenue'].cumsum()
         
         fig_revenue = px.line(
-            price_data_sorted,
+            daily_revenue,
             x='date',
             y='cumulative_revenue',
-            title="Chiffre d'Affaires Cumulé",
+            title="Chiffre d'Affaires Cumulé par Jour",
             labels={'cumulative_revenue': 'CA Cumulé (€)', 'date': 'Date'}
         )
         
-        # Ajout de markers pour les points de vente
+        # Ajout de markers pour les points de vente quotidiens
         fig_revenue.add_scatter(
-            x=price_data_sorted['date'],
-            y=price_data_sorted['cumulative_revenue'],
+            x=daily_revenue['date'],
+            y=daily_revenue['cumulative_revenue'],
             mode='markers',
-            name='Transactions',
-            marker=dict(size=8, color='red', symbol='circle')
+            name='CA Quotidien',
+            marker=dict(size=8, color='red', symbol='circle'),
+            hovertemplate='<b>%{x}</b><br>' +
+                         'CA du jour: €%{customdata}<br>' +
+                         'CA cumulé: €%{y}<br>' +
+                         '<extra></extra>',
+            customdata=daily_revenue['daily_revenue']
         )
+        
+        # Configurer l'axe des dates intelligemment
+        configure_date_axis(fig_revenue, daily_revenue['date'])
         
         st.plotly_chart(fig_revenue, use_container_width=True)
         
@@ -642,14 +841,32 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
             
             with col1:
                 st.subheader("💵 Répartition des Prix")
-                price_distribution = price_data['value_numeric'].value_counts().sort_index()
                 
-                fig_price_dist = px.bar(
-                    x=price_distribution.index,
-                    y=price_distribution.values,
+                # Utiliser un histogramme pour mieux visualiser la distribution avec outliers
+                fig_price_dist = px.histogram(
+                    price_data,
+                    x='value_numeric',
                     title="Distribution des Prix",
-                    labels={'x': 'Prix (€)', 'y': 'Nombre de Transactions'}
+                    labels={'value_numeric': 'Prix (€)', 'count': 'Nombre de Transactions'},
+                    nbins=min(25, len(price_data) // 3)  # Adapter le nombre de bins
                 )
+                
+                # Améliorer la lisibilité
+                fig_price_dist.update_layout(
+                    height=450,
+                    showlegend=False,
+                    xaxis=dict(
+                        title="Prix (€)",
+                        showgrid=True,
+                        gridcolor='rgba(255,255,255,0.1)'
+                    ),
+                    yaxis=dict(
+                        title="Nombre de Transactions",
+                        showgrid=True,
+                        gridcolor='rgba(255,255,255,0.1)'
+                    )
+                )
+                
                 st.plotly_chart(fig_price_dist, use_container_width=True)
             
             with col2:
@@ -1056,13 +1273,50 @@ def display_price_analysis(event: str, analysis: Dict):
     
     with col1:
         st.write("**Répartition des prix**")
-        if 'distribution' in analysis:
-            fig_price_dist = px.bar(
-                x=analysis['distribution'].index,
-                y=analysis['distribution'].values,
-                title=f"Distribution des prix - {event}",
-                labels={'x': 'Prix (€)', 'y': 'Fréquence'}
+        if 'distribution' in analysis and 'temporal_data' in analysis:
+            # Utiliser les données originales pour l'histogramme
+            temporal_data = analysis['temporal_data']
+            
+            # Vérifier s'il y a une colonne avec les prix individuels
+            if 'daily_revenue' in temporal_data.columns:
+                # Si on a les données agrégées par jour, on ne peut pas faire un histogramme détaillé
+                # On utilisera alors la distribution existante
+                price_dist_df = pd.DataFrame({
+                    'prix': analysis['distribution'].index,
+                    'frequence': analysis['distribution'].values
+                }).sort_values('prix')
+                
+                fig_price_dist = px.histogram(
+                    x=price_dist_df['prix'].repeat(price_dist_df['frequence']),
+                    title=f"Distribution des prix - {event}",
+                    labels={'x': 'Prix (€)', 'count': 'Fréquence'},
+                    nbins=min(20, len(price_dist_df))
+                )
+            else:
+                # Utiliser directement les données si disponibles
+                fig_price_dist = px.histogram(
+                    analysis['distribution'].index.repeat(analysis['distribution'].values),
+                    title=f"Distribution des prix - {event}",
+                    labels={'x': 'Prix (€)', 'count': 'Fréquence'},
+                    nbins=min(20, len(analysis['distribution']))
+                )
+            
+            # Améliorer la lisibilité
+            fig_price_dist.update_layout(
+                height=400,
+                showlegend=False,
+                xaxis=dict(
+                    title="Prix (€)",
+                    showgrid=True,
+                    gridcolor='rgba(255,255,255,0.1)'
+                ),
+                yaxis=dict(
+                    title="Fréquence",
+                    showgrid=True,
+                    gridcolor='rgba(255,255,255,0.1)'
+                )
             )
+            
             st.plotly_chart(fig_price_dist, use_container_width=True)
     
     with col2:
@@ -1076,6 +1330,8 @@ def display_price_analysis(event: str, analysis: Dict):
                 title=f"CA cumulé - {event}",
                 labels={'cumulative_revenue': 'CA Cumulé (€)', 'date': 'Date'}
             )
+            # Configurer l'axe des dates intelligemment
+            configure_date_axis(fig_cumul, temporal_data['date'])
             st.plotly_chart(fig_cumul, use_container_width=True)
 
 
@@ -1122,6 +1378,343 @@ def display_custom_analysis(event: str, analysis: Dict):
         st.plotly_chart(fig_custom, use_container_width=True)
 
 
+def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_event: str) -> Dict:
+    """Analyse le tracking de conversion en trouvant le dernier prix avant l'événement de conversion"""
+    
+    # Utiliser les données actives (filtrées ou complètes)
+    active_data = processor.get_active_data()
+    
+    # Conversion des dates
+    active_data['date'] = pd.to_datetime(active_data['date'], errors='coerce')
+    
+    # Normaliser les timezones pour éviter les erreurs de comparaison
+    if active_data['date'].dt.tz is not None:
+        active_data['date'] = active_data['date'].dt.tz_convert(None)
+    
+    # 1. Trouver toutes les conversations qui contiennent l'événement de conversion
+    conversations_with_conversion = active_data[
+        active_data['name'] == conversion_event
+    ]['conversation_id'].unique()
+    
+    if len(conversations_with_conversion) == 0:
+        return {'error': f"Aucune conversation trouvée avec l'événement '{conversion_event}'"}
+    
+    conversion_analysis = []
+    total_revenue = 0
+    
+    for conv_id in conversations_with_conversion:
+        if pd.isna(conv_id) or conv_id == '':
+            continue
+            
+        # 2. Récupérer tous les événements de cette conversation, triés par date
+        conv_events = active_data[
+            active_data['conversation_id'] == conv_id
+        ].sort_values('date')
+        
+        # 3. Trouver la première occurrence de l'événement de conversion
+        conversion_events = conv_events[conv_events['name'] == conversion_event]
+        if conversion_events.empty:
+            continue
+            
+        first_conversion_date = conversion_events.iloc[0]['date']
+        
+        # 4. Chercher tous les événements avec prix avant cette date de conversion
+        price_events_before = conv_events[
+            (conv_events['date'] < first_conversion_date) &
+            (conv_events['value_key'].str.contains('price', case=False, na=False) | 
+             conv_events['value_key'].str.contains('prix', case=False, na=False)) &
+            (conv_events['value_numeric'].notna())
+        ]
+        
+        # 5. Prendre le dernier prix (le plus proche de la conversion)
+        if not price_events_before.empty:
+            last_price_event = price_events_before.iloc[-1]  # Le dernier chronologiquement
+            last_price = last_price_event['value_numeric']
+            
+            conversion_analysis.append({
+                'conversation_id': conv_id,
+                'conversion_date': first_conversion_date,
+                'last_price': last_price,
+                'last_price_date': last_price_event['date'],
+                'last_price_event': last_price_event['name'],
+                'time_to_conversion': (first_conversion_date - last_price_event['date']).total_seconds() / 60  # en minutes
+            })
+            
+            total_revenue += last_price
+    
+    # Création du DataFrame pour l'analyse
+    if not conversion_analysis:
+        return {'error': f"Aucun prix trouvé avant les événements de conversion '{conversion_event}'"}
+    
+    analysis_df = pd.DataFrame(conversion_analysis)
+    
+    # Tri par date de conversion pour l'évolution cumulative
+    analysis_df = analysis_df.sort_values('conversion_date')
+    analysis_df['cumulative_revenue'] = analysis_df['last_price'].cumsum()
+    
+    return {
+        'success': True,
+        'conversion_event': conversion_event,
+        'total_conversations': len(conversations_with_conversion),
+        'successful_conversions': len(analysis_df),
+        'conversion_rate': len(analysis_df) / len(conversations_with_conversion) * 100,
+        'total_revenue': total_revenue,
+        'average_price': analysis_df['last_price'].mean(),
+        'analysis_data': analysis_df,
+        'price_distribution': analysis_df['last_price'].value_counts().sort_index(),
+        'avg_time_to_conversion': analysis_df['time_to_conversion'].mean()
+    }
+
+
+def display_conversion_analysis(processor: ROIDataProcessor):
+    """Affiche l'interface d'analyse de conversion (Niveau 1.5 - entre général et spécialisé)"""
+    st.markdown('<div class="section-header">🎯 Analyse de Conversion - Tracking du Dernier Prix</div>', 
+                unsafe_allow_html=True)
+    
+    # Utiliser les données actives (filtrées ou complètes)
+    active_data = processor.get_active_data()
+    
+    # Menu déroulant pour sélectionner l'événement de conversion
+    available_events = sorted(active_data['name'].unique())
+    
+    if not available_events:
+        st.warning("Aucun événement trouvé dans les données")
+        return
+    
+    st.subheader("🎯 Sélection de l'événement de conversion finale")
+    st.write("Sélectionnez l'événement qui marque la conversion réussie (ex: 'Step 4, Conversion', 'Purchase Complete', etc.)")
+    
+    selected_conversion = st.selectbox(
+        "Événement de conversion :",
+        options=["Sélectionnez un événement..."] + available_events,
+        index=0,
+        help="L'événement qui confirme qu'une transaction/conversion a été réalisée"
+    )
+    
+    
+    if selected_conversion and selected_conversion != "Sélectionnez un événement...":
+        # Analyse automatique
+        with st.spinner("Analyse des conversions en cours..."):
+            analysis_result = analyze_conversion_tracking(processor, selected_conversion)
+        
+        if 'error' in analysis_result:
+            st.error(f"❌ {analysis_result['error']}")
+            return
+        
+        # === MÉTRIQUES PRINCIPALES ===
+        st.subheader("📊 Résultats de l'analyse de conversion")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                label="Conversations avec conversion",
+                value=f"{analysis_result['successful_conversions']:,}",
+                delta=f"sur {analysis_result['total_conversations']} total"
+            )
+        
+        with col2:
+            st.metric(
+                label="Taux de conversion",
+                value=f"{analysis_result['conversion_rate']:.1f}%",
+                delta=None
+            )
+        
+        with col3:
+            st.metric(
+                label="Chiffre d'Affaires Total",
+                value=f"{analysis_result['total_revenue']:.2f}€",
+                delta=None
+            )
+        
+        with col4:
+            st.metric(
+                label="Panier Moyen",
+                value=f"{analysis_result['average_price']:.2f}€",
+                delta=None
+            )
+        
+        # === GRAPHIQUE D'ÉVOLUTION CUMULATIVE ===
+        st.subheader("📈 Évolution du Chiffre d'Affaires Cumulé")
+        
+        analysis_df = analysis_result['analysis_data']
+        
+        # Grouper les conversions par jour complet pour éviter les points multiples dans la journée
+        daily_conversions = analysis_df.copy()
+        daily_conversions['conversion_date_day'] = daily_conversions['conversion_date'].dt.date
+        
+        # Agréger par jour : sommer les prix et compter les conversions
+        daily_revenue = daily_conversions.groupby('conversion_date_day').agg({
+            'last_price': 'sum',  # Somme des revenus du jour
+            'conversation_id': 'count'  # Nombre de conversions du jour
+        }).reset_index()
+        daily_revenue.columns = ['date', 'daily_revenue', 'daily_conversions']
+        
+        # Convertir la date en datetime pour un meilleur affichage
+        daily_revenue['date'] = pd.to_datetime(daily_revenue['date'])
+        
+        # Calculer le CA cumulé par jour
+        daily_revenue = daily_revenue.sort_values('date')
+        daily_revenue['cumulative_revenue'] = daily_revenue['daily_revenue'].cumsum()
+        
+        # Graphique principal : évolution cumulative
+        fig_cumulative = go.Figure()
+        
+        # Ligne cumulative
+        fig_cumulative.add_trace(go.Scatter(
+            x=daily_revenue['date'],
+            y=daily_revenue['cumulative_revenue'],
+            mode='lines+markers',
+            name='CA Cumulé',
+            line=dict(color='#1f77b4', width=3),
+            marker=dict(size=8, color='#1f77b4'),
+            hovertemplate='<b>%{x}</b><br>' +
+                         'CA du jour: €%{customdata[0]}<br>' +
+                         'Conversions du jour: %{customdata[1]}<br>' +
+                         'CA cumulé: €%{y}<br>' +
+                         '<extra></extra>',
+            customdata=list(zip(daily_revenue['daily_revenue'], daily_revenue['daily_conversions']))
+        ))
+        
+        # Ajout des points de conversion quotidiens
+        fig_cumulative.add_trace(go.Scatter(
+            x=daily_revenue['date'],
+            y=daily_revenue['daily_revenue'],
+            mode='markers',
+            name='CA quotidien',
+            marker=dict(size=10, color='red', symbol='diamond'),
+            hovertemplate='<b>%{x}</b><br>' +
+                         'CA du jour: €%{y}<br>' +
+                         'Conversions: %{customdata}<br>' +
+                         '<extra></extra>',
+            customdata=daily_revenue['daily_conversions']
+        ))
+        
+        fig_cumulative.update_layout(
+            title=f"Évolution du CA pour les conversions '{selected_conversion}' (par jour)",
+            xaxis_title="Date de conversion",
+            yaxis_title="Montant (€)",
+            hovermode='x unified',
+            height=500
+        )
+        
+        # Configurer l'axe des dates intelligemment
+        configure_date_axis(fig_cumulative, daily_revenue['date'])
+        
+        st.plotly_chart(fig_cumulative, use_container_width=True)
+        
+        # === GRAPHIQUES SECONDAIRES ===
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("💰 Distribution des Prix")
+            
+            if len(analysis_result['price_distribution']) > 1:
+                analysis_df = analysis_result['analysis_data']
+                
+                # Créer l'histogramme
+                fig_price_dist = px.histogram(
+                    analysis_df,
+                    x='last_price',
+                    title="Distribution des derniers prix avant conversion",
+                    labels={'last_price': 'Prix (€)', 'count': 'Nombre de conversions'},
+                    nbins=min(30, len(analysis_df) // 2)  # Adapter le nombre de bins
+                )
+                
+                # Améliorer la lisibilité
+                fig_price_dist.update_layout(
+                    height=500,
+                    showlegend=False,
+                    xaxis=dict(
+                        title="Prix (€)",
+                        showgrid=True,
+                        gridcolor='rgba(255,255,255,0.1)'
+                    ),
+                    yaxis=dict(
+                        title="Nombre de conversions",
+                        showgrid=True,
+                        gridcolor='rgba(255,255,255,0.1)'
+                    )
+                )
+                
+                st.plotly_chart(fig_price_dist, use_container_width=True)
+                    
+            else:
+                st.info("Tous les prix de conversion sont identiques")
+        
+        with col2:
+            st.subheader("⏱️ Temps jusqu'à conversion")
+            
+            if analysis_result['avg_time_to_conversion'] > 0:
+                # Histogramme du temps jusqu'à conversion
+                fig_time_dist = px.histogram(
+                    analysis_df,
+                    x='time_to_conversion',
+                    title="Temps entre dernier prix et conversion",
+                    labels={'time_to_conversion': 'Minutes', 'count': 'Nombre de conversions'},
+                    nbins=20
+                )
+                fig_time_dist.update_layout(height=400)
+                st.plotly_chart(fig_time_dist, use_container_width=True)
+                
+                # Métrique temps moyen
+                st.metric(
+                    label="Temps moyen jusqu'à conversion",
+                    value=f"{analysis_result['avg_time_to_conversion']:.1f}min"
+                )
+            else:
+                st.info("Temps de conversion instantané")
+        
+        # === DÉTAILS COMPLÉMENTAIRES ===
+        with st.expander(f"🔍 Détails des conversions pour '{selected_conversion}'"):
+            st.write("**Résumé de l'analyse :**")
+            st.write(f"• **{analysis_result['total_conversations']}** conversations contiennent l'événement '{selected_conversion}'")
+            st.write(f"• **{analysis_result['successful_conversions']}** conversations ont un prix identifiable avant la conversion")
+            st.write(f"• **Taux de réussite** : {analysis_result['conversion_rate']:.1f}%")
+            st.write(f"• **Chiffre d'affaires total** : {analysis_result['total_revenue']:.2f}€")
+            st.write(f"• **Prix moyen** : {analysis_result['average_price']:.2f}€")
+            
+            # Tableau détaillé des conversions
+            st.write("**📋 Détail des conversions :**")
+            
+            # Formatage du DataFrame pour affichage
+            display_df = analysis_df.copy()
+            display_df['conversion_date'] = display_df['conversion_date'].dt.strftime('%Y-%m-%d %H:%M:%S')
+            display_df['last_price_date'] = display_df['last_price_date'].dt.strftime('%Y-%m-%d %H:%M:%S')
+            display_df['time_to_conversion'] = display_df['time_to_conversion'].round(2)
+            
+            # Renommage des colonnes
+            display_df = display_df.rename(columns={
+                'conversation_id': 'ID Conversation',
+                'conversion_date': 'Date Conversion',
+                'last_price': 'Dernier Prix (€)',
+                'last_price_date': 'Date Dernier Prix',
+                'last_price_event': 'Événement du Prix',
+                'time_to_conversion': 'Temps jusqu\'à Conversion (min)',
+                'cumulative_revenue': 'CA Cumulé (€)'
+            })
+            
+            # Réorganisation des colonnes
+            column_order = ['ID Conversation', 'Dernier Prix (€)', 'Date Dernier Prix', 
+                          'Événement du Prix', 'Date Conversion', 'Temps jusqu\'à Conversion (min)', 'CA Cumulé (€)']
+            display_df = display_df[column_order]
+            
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Option de téléchargement
+            csv = display_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Télécharger les détails",
+                data=csv,
+                file_name=f"conversion_analysis_{selected_conversion.replace(' ', '_')}.csv",
+                mime="text/csv"
+            )
+
+
 def main():
     """Fonction principale de l'application"""
     
@@ -1150,11 +1743,23 @@ def main():
             st.success(message)
             st.session_state.processor = processor
             
-            # Affichage des métriques globales
-            display_global_metrics(processor)
+            # Sélection de la période directement sous l'upload
+            start_date, end_date = display_period_picker(processor)
             
-            # Affichage de l'explorateur d'événements
-            display_event_explorer(processor)
+            if start_date is not None and end_date is not None:
+                # Appliquer le filtre de date
+                processor.apply_date_filter(start_date, end_date)
+                
+                # Affichage des métriques globales (avec données filtrées)
+                display_global_metrics(processor)
+                
+                # Affichage de l'analyse de conversion (nouveau niveau intermédiaire)
+                display_conversion_analysis(processor)
+                
+                # Affichage de l'explorateur d'événements
+                display_event_explorer(processor)
+            else:
+                st.warning("⚠️ Veuillez sélectionner une période valide pour continuer l'analyse")
             
         else:
             st.error(message)

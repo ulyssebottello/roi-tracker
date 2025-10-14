@@ -40,6 +40,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Fonction utilitaire pour le formatage des euros avec séparateurs de milliers
+def format_euro(amount: float) -> str:
+    """Formate un montant en euros avec séparateurs de milliers (espaces)"""
+    return f"{amount:,.2f}€".replace(',', ' ')
+
 # Classes pour la gestion des données
 class ROIDataProcessor:
     """Classe pour traiter et analyser les données ROI"""
@@ -550,15 +555,45 @@ def display_period_picker(processor: ROIDataProcessor) -> Tuple[datetime, dateti
     return start_datetime, end_datetime
 
 
-def display_global_metrics(processor: ROIDataProcessor):
+def display_global_metrics(processor: ROIDataProcessor, total_genii_conversations=None, conversion_event=None):
     """Affiche les métriques globales (Niveau 1)"""
     st.markdown('<div class="section-header">📊 Vue Généraliste - Métriques Globales</div>', 
                 unsafe_allow_html=True)
     
     metrics = processor.get_global_metrics()
     
-    # Métriques principales
-    col1, col2, col3, col4 = st.columns(4)
+    # Calcul du taux de conversion Genii si les paramètres sont fournis
+    genii_conversion_rate = None
+    conversion_count = 0
+    total_conversion_events = 0
+    
+    if total_genii_conversations and conversion_event:
+        active_data = processor.get_active_data()
+        
+        # Compter le nombre total d'événements de conversion (pour information)
+        total_conversion_events = len(active_data[active_data['name'] == conversion_event])
+        
+        # Compter les conversations uniques avec conversion (logique cohérente avec tracking)
+        conversations_with_conversion = active_data[
+            active_data['name'] == conversion_event
+        ]['conversation_id'].unique()
+        
+        # Filtrer les conversations avec ID valide
+        valid_conversations = [
+            conv_id for conv_id in conversations_with_conversion 
+            if not (pd.isna(conv_id) or conv_id == '')
+        ]
+        
+        conversion_count = len(valid_conversations)
+        
+        if total_genii_conversations > 0:
+            genii_conversion_rate = (conversion_count / total_genii_conversations) * 100
+    
+    # Métriques principales - ajuster le nombre de colonnes selon la présence du taux de conversion
+    if genii_conversion_rate is not None:
+        col1, col2, col3, col4, col5 = st.columns(5)
+    else:
+        col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric(
@@ -591,6 +626,21 @@ def display_global_metrics(processor: ROIDataProcessor):
             value=f"{avg_events_per_day:.1f}",
             delta=None
         )
+    
+    # Afficher le taux de conversion Genii si calculé
+    if genii_conversion_rate is not None:
+        with col5:
+            st.metric(
+                label="Taux de Conversion Genii",
+                value=f"{genii_conversion_rate:.2f}%",
+                delta=f"{conversion_count} conversations"
+            )
+            
+            # Information supplémentaire sur les événements vs conversations
+            if total_conversion_events > conversion_count:
+                st.caption(f"ℹ️ {total_conversion_events} événements au total • {conversion_count} conversations uniques")
+            else:
+                st.caption(f"ℹ️ Basé sur {conversion_count} conversations uniques")
     
     # Graphiques de répartition
     col1, col2 = st.columns(2)
@@ -807,7 +857,7 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
         with col1:
             st.metric(
                 label="Chiffre d'Affaires Total",
-                value=f"{total_revenue:.2f}€",
+                value=f"{total_revenue:,.2f}€".replace(',', ' '),
                 delta=None
             )
         
@@ -821,7 +871,7 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
         with col3:
             st.metric(
                 label="Transaction Moyenne",
-                value=f"{avg_transaction:.2f}€",
+                value=f"{avg_transaction:,.2f}€".replace(',', ' '),
                 delta=None
             )
         
@@ -852,15 +902,13 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
         # Ajout de markers pour les points de vente quotidiens
         fig_revenue.add_scatter(
             x=daily_revenue['date'],
-            y=daily_revenue['cumulative_revenue'],
+            y=daily_revenue['cumulative_revenue'].round(2),
             mode='markers',
             name='CA Quotidien',
             marker=dict(size=8, color='red', symbol='circle'),
             hovertemplate='<b>%{x}</b><br>' +
-                         'CA du jour: €%{customdata}<br>' +
-                         'CA cumulé: €%{y}<br>' +
-                         '<extra></extra>',
-            customdata=daily_revenue['daily_revenue']
+                         'CA cumulé: €%{y:,.2f}<br>' +
+                         '<extra></extra>'
         )
         
         # Configurer l'axe des dates intelligemment
@@ -1116,7 +1164,7 @@ def display_value_key_analysis(filtered_data: pd.DataFrame, value_key: str):
         
         # Ajouter les colonnes de prix si applicable
         if has_associated_prices:
-            row_data['CA Associé (€)'] = f"{revenue:.2f}"
+            row_data['CA Associé (€)'] = f"{revenue:,.2f}".replace(',', ' ')
             if total_revenue_all > 0:
                 revenue_percentage = (revenue / total_revenue_all) * 100
                 row_data['% du CA'] = f"{revenue_percentage:.1f}%"
@@ -1136,10 +1184,10 @@ def display_value_key_analysis(filtered_data: pd.DataFrame, value_key: str):
         with col2:
             st.metric("Total occurrences", total_count)
         with col3:
-            st.metric("CA Total", f"{total_revenue_all:.2f}€")
+            st.metric("CA Total", f"{total_revenue_all:,.2f}€".replace(',', ' '))
         with col4:
             avg_revenue = total_revenue_all / total_count if total_count > 0 else 0
-            st.metric("CA Moyen", f"{avg_revenue:.2f}€")
+            st.metric("CA Moyen", f"{avg_revenue:,.2f}€".replace(',', ' '))
     else:
         col1, col2 = st.columns(2)
         with col1:
@@ -1213,7 +1261,7 @@ def display_value_key_analysis(filtered_data: pd.DataFrame, value_key: str):
             st.write("**🥇 Meilleur CA:**")
             best_value, best_revenue = revenue_ranking[0]
             best_count = value_counts[best_value]
-            st.write(f"• **{best_value}**: {best_revenue:.2f}€ ({best_count} occurrences)")
+            st.write(f"• **{best_value}**: {best_revenue:,.2f}€ ({best_count} occurrences)".replace(',', ' '))
         
         with ranking_col2:
             if len(revenue_ranking) > 1:
@@ -1221,7 +1269,7 @@ def display_value_key_analysis(filtered_data: pd.DataFrame, value_key: str):
                 for value, revenue in revenue_ranking:
                     count = value_counts[value]
                     avg_basket = revenue / count if count > 0 else 0
-                    st.write(f"• **{value}**: {avg_basket:.2f}€/transaction")
+                    st.write(f"• **{value}**: {avg_basket:,.2f}€/transaction".replace(',', ' '))
     
     # Informations complémentaires si valeurs numériques détectées
     numeric_data = key_data.dropna(subset=['value_numeric'])
@@ -1267,7 +1315,7 @@ def display_detailed_analysis(processor: ROIDataProcessor, selected_events: List
         with col1:
             st.metric(
                 label="Chiffre d'Affaires Total",
-                value=f"{total_revenue:.2f}€",
+                value=f"{total_revenue:,.2f}€".replace(',', ' '),
                 delta=None
             )
         with col2:
@@ -1280,7 +1328,7 @@ def display_detailed_analysis(processor: ROIDataProcessor, selected_events: List
             avg_transaction = total_revenue / total_transactions if total_transactions > 0 else 0
             st.metric(
                 label="Transaction Moyenne",
-                value=f"{avg_transaction:.2f}€",
+                value=f"{avg_transaction:,.2f}€".replace(',', ' '),
                 delta=None
             )
     
@@ -1411,6 +1459,106 @@ def display_custom_analysis(event: str, analysis: Dict):
         st.plotly_chart(fig_custom, use_container_width=True)
 
 
+def analyze_conversion_performance(processor: ROIDataProcessor, conversion_event: str, total_genii_conversations=None) -> Dict:
+    """Analyse complète de la performance de l'événement de conversion sélectionné"""
+    
+    active_data = processor.get_active_data()
+    
+    # Conversion des dates
+    active_data['date'] = pd.to_datetime(active_data['date'], errors='coerce')
+    if active_data['date'].dt.tz is not None:
+        active_data['date'] = active_data['date'].dt.tz_convert(None)
+    
+    # 1. Analyser l'événement de conversion lui-même
+    conversion_events = active_data[active_data['name'] == conversion_event].copy()
+    
+    if conversion_events.empty:
+        return {'error': f"Aucun événement '{conversion_event}' trouvé"}
+    
+    # 2. Détecter s'il y a des prix directement dans l'événement de conversion
+    conversion_with_prices = conversion_events[
+        (conversion_events['value_key'].str.contains('price', case=False, na=False) | 
+         conversion_events['value_key'].str.contains('prix', case=False, na=False)) &
+        (conversion_events['value_numeric'].notna())
+    ]
+    
+    # 3. Compter les conversations uniques
+    unique_conversations = conversion_events['conversation_id'].unique()
+    valid_conversations = [
+        conv_id for conv_id in unique_conversations 
+        if not (pd.isna(conv_id) or conv_id == '')
+    ]
+    
+    result = {
+        'conversion_event': conversion_event,
+        'total_conversion_events': len(conversion_events),
+        'unique_conversations': len(valid_conversations),
+        'has_direct_prices': not conversion_with_prices.empty,
+        'analysis_mode': 'direct_prices' if not conversion_with_prices.empty else 'price_tracking'
+    }
+    
+    # 4. Calcul du taux de conversion si total Genii fourni
+    if total_genii_conversations and total_genii_conversations > 0:
+        result['conversion_rate'] = (len(valid_conversations) / total_genii_conversations) * 100
+    
+    # 5. Analyse selon le mode détecté
+    if result['analysis_mode'] == 'direct_prices':
+        # Mode prix directs
+        total_revenue = conversion_with_prices['value_numeric'].sum()
+        avg_price = conversion_with_prices['value_numeric'].mean()
+        transaction_count = len(conversion_with_prices)
+        
+        # Évolution temporelle
+        daily_revenue = conversion_with_prices.groupby(
+            conversion_with_prices['date'].dt.date
+        )['value_numeric'].sum().reset_index()
+        daily_revenue.columns = ['date', 'daily_revenue']
+        daily_revenue['date'] = pd.to_datetime(daily_revenue['date'])
+        daily_revenue = daily_revenue.sort_values('date')
+        daily_revenue['cumulative_revenue'] = daily_revenue['daily_revenue'].cumsum()
+        
+        result.update({
+            'total_revenue': total_revenue,
+            'average_price': avg_price,
+            'transaction_count': transaction_count,
+            'temporal_data': daily_revenue
+        })
+        
+    else:
+        # Mode tracking du dernier prix
+        tracking_result = analyze_conversion_tracking(processor, conversion_event)
+        if 'error' not in tracking_result:
+            # Créer les données temporelles à partir des résultats de tracking
+            temporal_data = tracking_result['analysis_data'].groupby(
+                tracking_result['analysis_data']['conversion_date'].dt.date
+            ).agg({
+                'last_price': 'sum',
+                'conversation_id': 'count'
+            }).reset_index()
+            temporal_data.columns = ['date', 'daily_revenue', 'daily_conversions']
+            
+            # Calcul cumulatif
+            temporal_data['date'] = pd.to_datetime(temporal_data['date'])
+            temporal_data = temporal_data.sort_values('date')
+            temporal_data['cumulative_revenue'] = temporal_data['daily_revenue'].cumsum()
+            
+            result.update({
+                'total_revenue': tracking_result['total_revenue'],
+                'average_price': tracking_result['average_price'], 
+                'successful_conversions': tracking_result['successful_conversions'],
+                'temporal_data': temporal_data
+            })
+        else:
+            result.update({
+                'total_revenue': 0,
+                'average_price': 0,
+                'successful_conversions': 0,
+                'tracking_error': tracking_result['error']
+            })
+    
+    return result
+
+
 def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_event: str) -> Dict:
     """Analyse le tracking de conversion en trouvant le dernier prix avant l'événement de conversion"""
     
@@ -1490,13 +1638,144 @@ def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_event: s
         'conversion_event': conversion_event,
         'total_conversations': len(conversations_with_conversion),
         'successful_conversions': len(analysis_df),
-        'conversion_rate': len(analysis_df) / len(conversations_with_conversion) * 100,
         'total_revenue': total_revenue,
         'average_price': analysis_df['last_price'].mean(),
         'analysis_data': analysis_df,
         'price_distribution': analysis_df['last_price'].value_counts().sort_index(),
         'avg_time_to_conversion': analysis_df['time_to_conversion'].mean()
     }
+
+
+def display_conversion_performance_section(processor: ROIDataProcessor, conversion_event: str, total_genii_conversations=None):
+    """Affiche la section de performance de conversion (prioritaire après configuration)"""
+    
+    if not conversion_event:
+        return
+    
+    st.markdown('<div class="section-header">🎯 Indicateurs de Performance de Conversion</div>', 
+                unsafe_allow_html=True)
+    
+    with st.spinner("Analyse des performances de conversion..."):
+        performance = analyze_conversion_performance(processor, conversion_event, total_genii_conversations)
+    
+    if 'error' in performance:
+        st.error(f"❌ {performance['error']}")
+        return
+    
+    # === BADGE MODE D'ANALYSE ===
+    mode_text = "📊 Prix Directs" if performance['analysis_mode'] == 'direct_prices' else "🔍 Tracking du Dernier Prix"
+    st.info(f"**Mode d'analyse détecté** : {mode_text}")
+    
+    # === MÉTRIQUES PRINCIPALES ===
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            label="Conversions",
+            value=f"{performance['total_conversion_events']:,}",
+            delta=f"sur {performance['unique_conversations']} conversations uniques" if performance['total_conversion_events'] > performance['unique_conversations'] else f"{performance['unique_conversations']} conversations uniques"
+        )
+    
+    with col2:
+        if 'conversion_rate' in performance:
+            # Calculer le taux basé sur les événements totaux
+            events_conversion_rate = (performance['total_conversion_events'] / total_genii_conversations) * 100
+            st.metric(
+                label="Taux de Conversion",
+                value=f"{events_conversion_rate:.2f}%", 
+                delta=f"sur {total_genii_conversations} conversations Genii"
+            )
+        else:
+            st.metric(
+                label="Taux de Conversion",
+                value="N/A",
+                delta="Total conversations Genii non spécifié"
+            )
+    
+    with col3:
+        if performance.get('total_revenue', 0) > 0:
+            st.metric(
+                label="Chiffre d'Affaires Total",
+                value=f"{performance['total_revenue']:,.2f}€".replace(',', ' '),
+                delta=None
+            )
+        else:
+            if 'tracking_error' in performance:
+                st.metric(
+                    label="Chiffre d'Affaires",
+                    value="Non disponible",
+                    delta="Aucun prix identifiable"
+                )
+            else:
+                st.metric(
+                    label="Chiffre d'Affaires Total",
+                    value="0€",
+                    delta=None
+                )
+    
+    with col4:
+        if performance.get('average_price', 0) > 0:
+            st.metric(
+                label="Panier Moyen",
+                value=f"{performance['average_price']:,.2f}€".replace(',', ' '),
+                delta=None
+            )
+        else:
+            st.metric(
+                label="Panier Moyen",
+                value="N/A",
+                delta=None
+            )
+    
+    # === GRAPHIQUE D'ÉVOLUTION ===
+    if 'temporal_data' in performance and not performance['temporal_data'].empty:
+        temporal_data = performance['temporal_data']
+        
+        # Graphique principal : évolution cumulative
+        fig_evolution = go.Figure()
+        
+        # Ligne cumulative
+        fig_evolution.add_trace(go.Scatter(
+            x=temporal_data['date'],
+            y=temporal_data['cumulative_revenue'].round(2),
+            mode='lines+markers',
+            name='CA Cumulé',
+            line=dict(color='#1f77b4', width=3),
+            marker=dict(size=8, color='#1f77b4'),
+            hovertemplate='<b>%{x}</b><br>' +
+                         'CA cumulé: €%{y:,.2f}<br>' +
+                         '<extra></extra>'
+        ))
+        
+        # Points quotidiens
+        fig_evolution.add_trace(go.Scatter(
+            x=temporal_data['date'],
+            y=temporal_data['daily_revenue'].round(2),
+            mode='markers',
+            name='CA quotidien',
+            marker=dict(size=10, color='red', symbol='diamond'),
+            hovertemplate='<b>%{x}</b><br>' +
+                         'CA du jour: €%{y:,.2f}<br>' +
+                         '<extra></extra>'
+        ))
+        
+        fig_evolution.update_layout(
+            title=f"Performance de Conversion - {conversion_event}",
+            xaxis_title="Date",
+            yaxis_title="Montant (€)",
+            hovermode='x unified',
+            height=400
+        )
+        
+        # Configurer l'axe des dates intelligemment
+        configure_date_axis(fig_evolution, temporal_data['date'])
+        
+        st.plotly_chart(fig_evolution, use_container_width=True)
+    
+    # === INFORMATIONS COMPLÉMENTAIRES ===
+    if performance['analysis_mode'] == 'price_tracking' and 'tracking_error' in performance:
+        st.warning(f"⚠️ {performance['tracking_error']}")
+        st.info("💡 Cet événement de conversion ne contient pas de prix et aucun prix n'a pu être identifié dans les événements précédents des conversations.")
 
 
 def display_conversion_analysis(processor: ROIDataProcessor):
@@ -1537,33 +1816,26 @@ def display_conversion_analysis(processor: ROIDataProcessor):
         # === MÉTRIQUES PRINCIPALES ===
         st.subheader("📊 Résultats de l'analyse de conversion")
         
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             st.metric(
-                label="Conversations avec conversion",
+                label="Conversions avec Prix Identifiable",
                 value=f"{analysis_result['successful_conversions']:,}",
-                delta=f"sur {analysis_result['total_conversations']} total"
+                delta=f"sur {analysis_result['total_conversations']} conversations"
             )
         
         with col2:
             st.metric(
-                label="Taux de conversion",
-                value=f"{analysis_result['conversion_rate']:.1f}%",
+                label="Chiffre d'Affaires Total",
+                value=f"{analysis_result['total_revenue']:,.2f}€".replace(',', ' '),
                 delta=None
             )
         
         with col3:
             st.metric(
-                label="Chiffre d'Affaires Total",
-                value=f"{analysis_result['total_revenue']:.2f}€",
-                delta=None
-            )
-        
-        with col4:
-            st.metric(
                 label="Panier Moyen",
-                value=f"{analysis_result['average_price']:.2f}€",
+                value=f"{analysis_result['average_price']:,.2f}€".replace(',', ' '),
                 delta=None
             )
         
@@ -1596,28 +1868,25 @@ def display_conversion_analysis(processor: ROIDataProcessor):
         # Ligne cumulative
         fig_cumulative.add_trace(go.Scatter(
             x=daily_revenue['date'],
-            y=daily_revenue['cumulative_revenue'],
+            y=daily_revenue['cumulative_revenue'].round(2),
             mode='lines+markers',
             name='CA Cumulé',
             line=dict(color='#1f77b4', width=3),
             marker=dict(size=8, color='#1f77b4'),
             hovertemplate='<b>%{x}</b><br>' +
-                         'CA du jour: €%{customdata[0]}<br>' +
-                         'Conversions du jour: %{customdata[1]}<br>' +
-                         'CA cumulé: €%{y}<br>' +
-                         '<extra></extra>',
-            customdata=list(zip(daily_revenue['daily_revenue'], daily_revenue['daily_conversions']))
+                         'CA cumulé: €%{y:,.2f}<br>' +
+                         '<extra></extra>'
         ))
         
         # Ajout des points de conversion quotidiens
         fig_cumulative.add_trace(go.Scatter(
             x=daily_revenue['date'],
-            y=daily_revenue['daily_revenue'],
+            y=daily_revenue['daily_revenue'].round(2),
             mode='markers',
             name='CA quotidien',
             marker=dict(size=10, color='red', symbol='diamond'),
             hovertemplate='<b>%{x}</b><br>' +
-                         'CA du jour: €%{y}<br>' +
+                         'CA du jour: €%{y:,.2f}<br>' +
                          'Conversions: %{customdata}<br>' +
                          '<extra></extra>',
             customdata=daily_revenue['daily_conversions']
@@ -1701,11 +1970,22 @@ def display_conversion_analysis(processor: ROIDataProcessor):
         # === DÉTAILS COMPLÉMENTAIRES ===
         with st.expander(f"🔍 Détails des conversions pour '{selected_conversion}'"):
             st.write("**Résumé de l'analyse :**")
-            st.write(f"• **{analysis_result['total_conversations']}** conversations contiennent l'événement '{selected_conversion}'")
-            st.write(f"• **{analysis_result['successful_conversions']}** conversations ont un prix identifiable avant la conversion")
-            st.write(f"• **Taux de réussite** : {analysis_result['conversion_rate']:.1f}%")
-            st.write(f"• **Chiffre d'affaires total** : {analysis_result['total_revenue']:.2f}€")
-            st.write(f"• **Prix moyen** : {analysis_result['average_price']:.2f}€")
+            st.write(f"• **{analysis_result['total_conversations']}** conversations uniques contiennent l'événement '{selected_conversion}'")
+            st.write(f"• **{analysis_result['successful_conversions']}** de ces conversations ont un prix identifiable avant la conversion")
+            
+            # Calcul du nombre d'événements totaux pour comparaison
+            active_data = processor.get_active_data()
+            total_events = len(active_data[active_data['name'] == selected_conversion])
+            
+            if total_events > analysis_result['total_conversations']:
+                st.write(f"• **{total_events}** événements de conversion au total (certaines conversations en ont plusieurs)")
+            
+            excluded_conversations = analysis_result['total_conversations'] - analysis_result['successful_conversions']
+            if excluded_conversations > 0:
+                st.write(f"• **{excluded_conversations}** conversations exclues (pas de prix identifiable ou ID conversation manquant)")
+                
+            st.write(f"• **Chiffre d'affaires total** : {analysis_result['total_revenue']:,.2f}€".replace(',', ' '))
+            st.write(f"• **Prix moyen** : {analysis_result['average_price']:,.2f}€".replace(',', ' '))
             
             # Tableau détaillé des conversions
             st.write("**📋 Détail des conversions :**")
@@ -1783,8 +2063,65 @@ def main():
                 # Appliquer le filtre de date
                 processor.apply_date_filter(start_date, end_date)
                 
-                # Affichage des métriques globales (avec données filtrées)
-                display_global_metrics(processor)
+                # === CONFIGURATION GENII ===
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Champ pour le nombre total de conversations Genii
+                    total_genii_conversations = st.number_input(
+                        "Nombre total de conversations Genii sur la période",
+                        min_value=0,
+                        value=st.session_state.get('total_genii_conversations', 0),
+                        step=1,
+                        help="Saisissez le nombre total de conversations sur votre système Genii pour la période sélectionnée"
+                    )
+                    
+                    # Sauvegarder dans la session
+                    st.session_state['total_genii_conversations'] = total_genii_conversations
+                
+                with col2:
+                    # Dropdown pour l'événement de conversion finale
+                    active_data = processor.get_active_data()
+                    available_events = sorted(active_data['name'].unique()) if not active_data.empty else []
+                    
+                    if available_events:
+                        default_index = 0
+                        if 'genii_conversion_event' in st.session_state and st.session_state['genii_conversion_event'] in available_events:
+                            default_index = available_events.index(st.session_state['genii_conversion_event'])
+                        
+                        genii_conversion_event = st.selectbox(
+                            "Événement de conversion finale",
+                            options=available_events,
+                            index=default_index,
+                            help="Sélectionnez l'événement qui marque une conversion réussie"
+                        )
+                        
+                        # Sauvegarder dans la session
+                        st.session_state['genii_conversion_event'] = genii_conversion_event
+                    else:
+                        genii_conversion_event = None
+                        st.warning("Aucun événement disponible dans les données")
+                
+                # Séparateur après configuration
+                st.markdown("---")
+                
+                # === NOUVELLE SECTION : PERFORMANCE DE CONVERSION ===
+                if genii_conversion_event:
+                    display_conversion_performance_section(
+                        processor,
+                        genii_conversion_event,
+                        total_genii_conversations if total_genii_conversations > 0 else None
+                    )
+                    
+                    # Séparateur avant métriques globales
+                    st.markdown("---")
+                
+                # Affichage des métriques globales (avec données filtrées et paramètres Genii)
+                display_global_metrics(
+                    processor, 
+                    total_genii_conversations if total_genii_conversations > 0 else None,
+                    genii_conversion_event
+                )
                 
                 # Affichage de l'analyse de conversion (nouveau niveau intermédiaire)
                 display_conversion_analysis(processor)

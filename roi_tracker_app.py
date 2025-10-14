@@ -142,30 +142,63 @@ class ROIDataProcessor:
                     # Extraction de la clé depuis le nom de colonne (value_custom -> custom)
                     key_from_column = value_col.replace('value_', '')
                     
-                    # Parse du contenu si au format clé:valeur, sinon utiliser la colonne comme clé
-                    if ':' in str(value_content):
-                        parts = str(value_content).split(':', 1)
+                    # Parse du contenu - gestion des multiples paires séparées par |
+                    content_str = str(value_content).strip()
+                    
+                    # Vérifier s'il y a des multiples paires séparées par |
+                    if '|' in content_str and ':' in content_str:
+                        # Format multiple : clé1:valeur1|clé2:valeur2|...
+                        pairs = content_str.split('|')
+                        for pair in pairs:
+                            pair = pair.strip()
+                            if ':' in pair:
+                                parts = pair.split(':', 1)
+                                if len(parts) == 2:
+                                    key = parts[0].strip()
+                                    value = parts[1].strip()
+                                    
+                                    # Tentative de conversion en nombre pour les prix
+                                    numeric_value = None
+                                    try:
+                                        # Nettoyer la valeur pour extraction numérique (enlever €, espaces, etc.)
+                                        clean_value = value.replace('€', '').replace(',', '.').strip()
+                                        numeric_value = float(clean_value)
+                                    except ValueError:
+                                        pass
+                                    
+                                    consolidated_data[event_key]['values'][key] = {
+                                        'text': value,
+                                        'numeric': numeric_value
+                                    }
+                    elif ':' in content_str:
+                        # Format simple : clé:valeur
+                        parts = content_str.split(':', 1)
                         if len(parts) == 2:
                             key = parts[0].strip()
                             value = parts[1].strip()
                         else:
                             key = key_from_column
-                            value = str(value_content).strip()
+                            value = content_str
                     else:
+                        # Pas de format clé:valeur, utiliser le nom de colonne comme clé
                         key = key_from_column
-                        value = str(value_content).strip()
+                        value = content_str
                     
-                    # Tentative de conversion en nombre pour les prix
-                    numeric_value = None
-                    try:
-                        numeric_value = float(value)
-                    except ValueError:
-                        pass
-                    
-                    consolidated_data[event_key]['values'][key] = {
-                        'text': value,
-                        'numeric': numeric_value
-                    }
+                    # Si on est dans les cas simples, traiter la valeur
+                    if not ('|' in content_str and ':' in content_str):
+                        # Tentative de conversion en nombre pour les prix
+                        numeric_value = None
+                        try:
+                            # Nettoyer la valeur pour extraction numérique (enlever €, espaces, etc.)
+                            clean_value = value.replace('€', '').replace(',', '.').strip()
+                            numeric_value = float(clean_value)
+                        except ValueError:
+                            pass
+                        
+                        consolidated_data[event_key]['values'][key] = {
+                            'text': value,
+                            'numeric': numeric_value
+                        }
                 
                 # Si aucune valeur n'a été trouvée, marquer comme no_value
                 if not has_values:

@@ -716,8 +716,10 @@ def display_event_explorer(processor: ROIDataProcessor):
     
     for event_name in available_event_names:
         with cols[col_idx % 2]:
-            # Comptage du nombre d'occurrences pour info
-            event_count = len(active_data[active_data['name'] == event_name])
+            # Comptage CORRECT du nombre d'événements uniques (pas de doublons dus au format long)
+            # Compter les combinaisons uniques (name, date, conversation_id)
+            event_data = active_data[active_data['name'] == event_name]
+            event_count = len(event_data.drop_duplicates(subset=['name', 'date', 'conversation_id']))
             
             if st.checkbox(f"{event_name} ({event_count} événements)", key=f"event_{event_name}"):
                 selected_event_names.append(event_name)
@@ -755,7 +757,9 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
         filtered_data['date'] = filtered_data['date'].dt.tz_convert(None)
     
     # === MÉTRIQUES PRINCIPALES ===
-    total_events = len(filtered_data)
+    # Compter les événements uniques (éviter les doublons dus au format long)
+    unique_events = filtered_data.drop_duplicates(subset=['name', 'date', 'conversation_id'])
+    total_events = len(unique_events)
     unique_days = filtered_data['date'].dt.date.nunique()
     avg_events_per_day = total_events / max(unique_days, 1)
     
@@ -785,15 +789,15 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
     # === ÉVOLUTION TEMPORELLE DES ÉVÉNEMENTS ===
     st.subheader("📊 Évolution du nombre d'événements")
     
-    # Comptage par jour et par nom d'événement
-    daily_events = filtered_data.groupby([
-        filtered_data['date'].dt.date, 'name'
+    # Comptage par jour et par nom d'événement (utiliser unique_events pour éviter doublons)
+    daily_events = unique_events.groupby([
+        unique_events['date'].dt.date, 'name'
     ]).size().unstack(fill_value=0).reset_index()
     
     # Si un seul type d'événement, graphique simple
     if len(selected_event_names) == 1:
-        daily_simple = filtered_data.groupby(
-            filtered_data['date'].dt.date
+        daily_simple = unique_events.groupby(
+            unique_events['date'].dt.date
         ).size().reset_index()
         daily_simple.columns = ['date', 'count']
         
@@ -996,7 +1000,8 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
     # === INFORMATIONS COMPLÉMENTAIRES ===
     with st.expander("🔍 Détails des événements sélectionnés"):
         st.write("**Répartition par événement:**")
-        event_counts = filtered_data['name'].value_counts()
+        # Utiliser unique_events pour compter correctement
+        event_counts = unique_events['name'].value_counts()
         for event_name, count in event_counts.items():
             percentage = (count / total_events) * 100
             st.write(f"- **{event_name}**: {count} événements ({percentage:.1f}%)")

@@ -555,7 +555,7 @@ def display_period_picker(processor: ROIDataProcessor) -> Tuple[datetime, dateti
     return start_datetime, end_datetime
 
 
-def display_global_metrics(processor: ROIDataProcessor, total_genii_conversations=None, conversion_event=None):
+def display_global_metrics(processor: ROIDataProcessor, total_genii_conversations=None, conversion_events=None):
     """Affiche les métriques globales (Niveau 1)"""
     st.markdown('<div class="section-header">📊 Vue Généraliste - Métriques Globales</div>', 
                 unsafe_allow_html=True)
@@ -567,15 +567,18 @@ def display_global_metrics(processor: ROIDataProcessor, total_genii_conversation
     conversion_count = 0
     total_conversion_events = 0
     
-    if total_genii_conversations and conversion_event:
+    if total_genii_conversations and conversion_events:
         active_data = processor.get_active_data()
         
+        # Gestion de liste ou d'un seul événement
+        events_list = conversion_events if isinstance(conversion_events, list) else [conversion_events]
+        
         # Compter le nombre total d'événements de conversion (pour information)
-        total_conversion_events = len(active_data[active_data['name'] == conversion_event])
+        total_conversion_events = len(active_data[active_data['name'].isin(events_list)])
         
         # Compter les conversations uniques avec conversion (logique cohérente avec tracking)
         conversations_with_conversion = active_data[
-            active_data['name'] == conversion_event
+            active_data['name'].isin(events_list)
         ]['conversation_id'].unique()
         
         # Filtrer les conversations avec ID valide
@@ -1464,8 +1467,11 @@ def display_custom_analysis(event: str, analysis: Dict):
         st.plotly_chart(fig_custom, use_container_width=True)
 
 
-def analyze_conversion_performance(processor: ROIDataProcessor, conversion_event: str, total_genii_conversations=None) -> Dict:
-    """Analyse complète de la performance de l'événement de conversion sélectionné"""
+def analyze_conversion_performance(processor: ROIDataProcessor, conversion_events, total_genii_conversations=None) -> Dict:
+    """Analyse complète de la performance des événements de conversion sélectionnés"""
+    
+    # Gestion de liste ou d'un seul événement
+    events_list = conversion_events if isinstance(conversion_events, list) else [conversion_events]
     
     active_data = processor.get_active_data()
     
@@ -1474,29 +1480,30 @@ def analyze_conversion_performance(processor: ROIDataProcessor, conversion_event
     if active_data['date'].dt.tz is not None:
         active_data['date'] = active_data['date'].dt.tz_convert(None)
     
-    # 1. Analyser l'événement de conversion lui-même
-    conversion_events = active_data[active_data['name'] == conversion_event].copy()
+    # 1. Analyser tous les événements de conversion sélectionnés
+    conversion_events_data = active_data[active_data['name'].isin(events_list)].copy()
     
-    if conversion_events.empty:
-        return {'error': f"Aucun événement '{conversion_event}' trouvé"}
+    if conversion_events_data.empty:
+        events_str = "', '".join(events_list)
+        return {'error': f"Aucun événement trouvé parmi '{events_str}'"}
     
-    # 2. Détecter s'il y a des prix directement dans l'événement de conversion
-    conversion_with_prices = conversion_events[
-        (conversion_events['value_key'].str.contains('price', case=False, na=False) | 
-         conversion_events['value_key'].str.contains('prix', case=False, na=False)) &
-        (conversion_events['value_numeric'].notna())
+    # 2. Détecter s'il y a des prix directement dans les événements de conversion
+    conversion_with_prices = conversion_events_data[
+        (conversion_events_data['value_key'].str.contains('price', case=False, na=False) | 
+         conversion_events_data['value_key'].str.contains('prix', case=False, na=False)) &
+        (conversion_events_data['value_numeric'].notna())
     ]
     
     # 3. Compter les conversations uniques
-    unique_conversations = conversion_events['conversation_id'].unique()
+    unique_conversations = conversion_events_data['conversation_id'].unique()
     valid_conversations = [
         conv_id for conv_id in unique_conversations 
         if not (pd.isna(conv_id) or conv_id == '')
     ]
     
     result = {
-        'conversion_event': conversion_event,
-        'total_conversion_events': len(conversion_events),
+        'conversion_events': events_list,
+        'total_conversion_events': len(conversion_events_data),
         'unique_conversations': len(valid_conversations),
         'has_direct_prices': not conversion_with_prices.empty,
         'analysis_mode': 'direct_prices' if not conversion_with_prices.empty else 'price_tracking'
@@ -1531,7 +1538,7 @@ def analyze_conversion_performance(processor: ROIDataProcessor, conversion_event
         
     else:
         # Mode tracking du dernier prix
-        tracking_result = analyze_conversion_tracking(processor, conversion_event)
+        tracking_result = analyze_conversion_tracking(processor, events_list)
         if 'error' not in tracking_result:
             # Créer les données temporelles à partir des résultats de tracking
             temporal_data = tracking_result['analysis_data'].groupby(
@@ -1564,8 +1571,11 @@ def analyze_conversion_performance(processor: ROIDataProcessor, conversion_event
     return result
 
 
-def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_event: str) -> Dict:
-    """Analyse le tracking de conversion en trouvant le dernier prix avant l'événement de conversion"""
+def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_events) -> Dict:
+    """Analyse le tracking de conversion en trouvant le dernier prix avant les événements de conversion"""
+    
+    # Gestion de liste ou d'un seul événement
+    events_list = conversion_events if isinstance(conversion_events, list) else [conversion_events]
     
     # Utiliser les données actives (filtrées ou complètes)
     active_data = processor.get_active_data()
@@ -1577,13 +1587,14 @@ def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_event: s
     if active_data['date'].dt.tz is not None:
         active_data['date'] = active_data['date'].dt.tz_convert(None)
     
-    # 1. Trouver toutes les conversations qui contiennent l'événement de conversion
+    # 1. Trouver toutes les conversations qui contiennent au moins un des événements de conversion
     conversations_with_conversion = active_data[
-        active_data['name'] == conversion_event
+        active_data['name'].isin(events_list)
     ]['conversation_id'].unique()
     
     if len(conversations_with_conversion) == 0:
-        return {'error': f"Aucune conversation trouvée avec l'événement '{conversion_event}'"}
+        events_str = "', '".join(events_list)
+        return {'error': f"Aucune conversation trouvée avec les événements '{events_str}'"}
     
     conversion_analysis = []
     total_revenue = 0
@@ -1597,12 +1608,14 @@ def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_event: s
             active_data['conversation_id'] == conv_id
         ].sort_values('date')
         
-        # 3. Trouver la première occurrence de l'événement de conversion
-        conversion_events = conv_events[conv_events['name'] == conversion_event]
-        if conversion_events.empty:
+        # 3. Trouver la première occurrence d'un des événements de conversion
+        conversion_events_in_conv = conv_events[conv_events['name'].isin(events_list)]
+        if conversion_events_in_conv.empty:
             continue
             
-        first_conversion_date = conversion_events.iloc[0]['date']
+        first_conversion = conversion_events_in_conv.iloc[0]
+        first_conversion_date = first_conversion['date']
+        first_conversion_event = first_conversion['name']
         
         # 4. Chercher tous les événements avec prix avant cette date de conversion
         price_events_before = conv_events[
@@ -1620,6 +1633,7 @@ def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_event: s
             conversion_analysis.append({
                 'conversation_id': conv_id,
                 'conversion_date': first_conversion_date,
+                'conversion_event': first_conversion_event,
                 'last_price': last_price,
                 'last_price_date': last_price_event['date'],
                 'last_price_event': last_price_event['name'],
@@ -1630,7 +1644,8 @@ def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_event: s
     
     # Création du DataFrame pour l'analyse
     if not conversion_analysis:
-        return {'error': f"Aucun prix trouvé avant les événements de conversion '{conversion_event}'"}
+        events_str = "', '".join(events_list)
+        return {'error': f"Aucun prix trouvé avant les événements de conversion '{events_str}'"}
     
     analysis_df = pd.DataFrame(conversion_analysis)
     
@@ -1640,7 +1655,7 @@ def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_event: s
     
     return {
         'success': True,
-        'conversion_event': conversion_event,
+        'conversion_events': events_list,
         'total_conversations': len(conversations_with_conversion),
         'successful_conversions': len(analysis_df),
         'total_revenue': total_revenue,
@@ -1651,17 +1666,20 @@ def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_event: s
     }
 
 
-def display_conversion_performance_section(processor: ROIDataProcessor, conversion_event: str, total_genii_conversations=None):
+def display_conversion_performance_section(processor: ROIDataProcessor, conversion_events, total_genii_conversations=None):
     """Affiche la section de performance de conversion (prioritaire après configuration)"""
     
-    if not conversion_event:
+    if not conversion_events:
         return
+    
+    # Gestion de liste ou d'un seul événement
+    events_list = conversion_events if isinstance(conversion_events, list) else [conversion_events]
     
     st.markdown('<div class="section-header">🎯 Indicateurs de Performance de Conversion</div>', 
                 unsafe_allow_html=True)
     
     with st.spinner("Analyse des performances de conversion..."):
-        performance = analyze_conversion_performance(processor, conversion_event, total_genii_conversations)
+        performance = analyze_conversion_performance(processor, events_list, total_genii_conversations)
     
     if 'error' in performance:
         st.error(f"❌ {performance['error']}")
@@ -1669,7 +1687,8 @@ def display_conversion_performance_section(processor: ROIDataProcessor, conversi
     
     # === BADGE MODE D'ANALYSE ===
     mode_text = "📊 Prix Directs" if performance['analysis_mode'] == 'direct_prices' else "🔍 Tracking du Dernier Prix"
-    st.info(f"**Mode d'analyse détecté** : {mode_text}")
+    events_text = ", ".join([f"'{e}'" for e in events_list])
+    st.info(f"**Mode d'analyse détecté** : {mode_text} | **Événements analysés** : {events_text}")
     
     # === MÉTRIQUES PRINCIPALES ===
     col1, col2, col3, col4 = st.columns(4)
@@ -1764,8 +1783,9 @@ def display_conversion_performance_section(processor: ROIDataProcessor, conversi
                          '<extra></extra>'
         ))
         
+        events_title = ", ".join(events_list)
         fig_evolution.update_layout(
-            title=f"Performance de Conversion - {conversion_event}",
+            title=f"Performance de Conversion - {events_title}",
             xaxis_title="Date",
             yaxis_title="Montant (€)",
             hovermode='x unified',
@@ -2085,36 +2105,37 @@ def main():
                     st.session_state['total_genii_conversations'] = total_genii_conversations
                 
                 with col2:
-                    # Dropdown pour l'événement de conversion finale
+                    # Multi-select pour les événements de conversion finale
                     active_data = processor.get_active_data()
                     available_events = sorted(active_data['name'].unique()) if not active_data.empty else []
                     
                     if available_events:
-                        default_index = 0
-                        if 'genii_conversion_event' in st.session_state and st.session_state['genii_conversion_event'] in available_events:
-                            default_index = available_events.index(st.session_state['genii_conversion_event'])
+                        default_selection = []
+                        if 'genii_conversion_events' in st.session_state:
+                            # Filtrer pour ne garder que les événements encore disponibles
+                            default_selection = [e for e in st.session_state['genii_conversion_events'] if e in available_events]
                         
-                        genii_conversion_event = st.selectbox(
-                            "Événement de conversion finale",
+                        genii_conversion_events = st.multiselect(
+                            "Événement(s) de conversion finale",
                             options=available_events,
-                            index=default_index,
-                            help="Sélectionnez l'événement qui marque une conversion réussie"
+                            default=default_selection,
+                            help="Sélectionnez un ou plusieurs événements qui marquent une conversion réussie"
                         )
                         
                         # Sauvegarder dans la session
-                        st.session_state['genii_conversion_event'] = genii_conversion_event
+                        st.session_state['genii_conversion_events'] = genii_conversion_events
                     else:
-                        genii_conversion_event = None
+                        genii_conversion_events = []
                         st.warning("Aucun événement disponible dans les données")
                 
                 # Séparateur après configuration
                 st.markdown("---")
                 
                 # === NOUVELLE SECTION : PERFORMANCE DE CONVERSION ===
-                if genii_conversion_event:
+                if genii_conversion_events:
                     display_conversion_performance_section(
                         processor,
-                        genii_conversion_event,
+                        genii_conversion_events,
                         total_genii_conversations if total_genii_conversations > 0 else None
                     )
                     
@@ -2125,7 +2146,7 @@ def main():
                 display_global_metrics(
                     processor, 
                     total_genii_conversations if total_genii_conversations > 0 else None,
-                    genii_conversion_event
+                    genii_conversion_events if genii_conversion_events else None
                 )
                 
                 # Affichage de l'analyse de conversion (nouveau niveau intermédiaire)

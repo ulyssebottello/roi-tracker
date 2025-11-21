@@ -2110,20 +2110,13 @@ def main():
                     available_events = sorted(active_data['name'].unique()) if not active_data.empty else []
                     
                     if available_events:
-                        default_selection = []
-                        if 'genii_conversion_events' in st.session_state:
-                            # Filtrer pour ne garder que les événements encore disponibles
-                            default_selection = [e for e in st.session_state['genii_conversion_events'] if e in available_events]
-                        
                         genii_conversion_events = st.multiselect(
                             "Événement(s) de conversion finale",
                             options=available_events,
-                            default=default_selection,
+                            default=[],
+                            key="genii_conversion_events",
                             help="Sélectionnez un ou plusieurs événements qui marquent une conversion réussie"
                         )
-                        
-                        # Sauvegarder dans la session
-                        st.session_state['genii_conversion_events'] = genii_conversion_events
                     else:
                         genii_conversion_events = []
                         st.warning("Aucun événement disponible dans les données")

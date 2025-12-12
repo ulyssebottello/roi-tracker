@@ -562,41 +562,8 @@ def display_global_metrics(processor: ROIDataProcessor, total_genii_conversation
     
     metrics = processor.get_global_metrics()
     
-    # Calcul du taux de conversion Genii si les paramètres sont fournis
-    genii_conversion_rate = None
-    conversion_count = 0
-    total_conversion_events = 0
-    
-    if total_genii_conversations and conversion_events:
-        active_data = processor.get_active_data()
-        
-        # Gestion de liste ou d'un seul événement
-        events_list = conversion_events if isinstance(conversion_events, list) else [conversion_events]
-        
-        # Compter le nombre total d'événements de conversion (pour information)
-        total_conversion_events = len(active_data[active_data['name'].isin(events_list)])
-        
-        # Compter les conversations uniques avec conversion (logique cohérente avec tracking)
-        conversations_with_conversion = active_data[
-            active_data['name'].isin(events_list)
-        ]['conversation_id'].unique()
-        
-        # Filtrer les conversations avec ID valide
-        valid_conversations = [
-            conv_id for conv_id in conversations_with_conversion 
-            if not (pd.isna(conv_id) or conv_id == '')
-        ]
-        
-        conversion_count = len(valid_conversations)
-        
-        if total_genii_conversations > 0:
-            genii_conversion_rate = (conversion_count / total_genii_conversations) * 100
-    
-    # Métriques principales - ajuster le nombre de colonnes selon la présence du taux de conversion
-    if genii_conversion_rate is not None:
-        col1, col2, col3, col4, col5 = st.columns(5)
-    else:
-        col1, col2, col3, col4 = st.columns(4)
+    # Métriques principales
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric(
@@ -629,21 +596,6 @@ def display_global_metrics(processor: ROIDataProcessor, total_genii_conversation
             value=f"{avg_events_per_day:.1f}",
             delta=None
         )
-    
-    # Afficher le taux de conversion Genii si calculé
-    if genii_conversion_rate is not None:
-        with col5:
-            st.metric(
-                label="Taux de Conversion Genii",
-                value=f"{genii_conversion_rate:.2f}%",
-                delta=f"{conversion_count} conversations"
-            )
-            
-            # Information supplémentaire sur les événements vs conversations
-            if total_conversion_events > conversion_count:
-                st.caption(f"ℹ️ {total_conversion_events} événements au total • {conversion_count} conversations uniques")
-            else:
-                st.caption(f"ℹ️ Basé sur {conversion_count} conversations uniques")
     
     # Graphiques de répartition
     col1, col2 = st.columns(2)
@@ -1691,7 +1643,7 @@ def display_conversion_performance_section(processor: ROIDataProcessor, conversi
     st.info(f"**Mode d'analyse détecté** : {mode_text} | **Événements analysés** : {events_text}")
     
     # === MÉTRIQUES PRINCIPALES ===
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.metric(
@@ -1701,22 +1653,6 @@ def display_conversion_performance_section(processor: ROIDataProcessor, conversi
         )
     
     with col2:
-        if 'conversion_rate' in performance:
-            # Calculer le taux basé sur les événements totaux
-            events_conversion_rate = (performance['total_conversion_events'] / total_genii_conversations) * 100
-            st.metric(
-                label="Taux de Conversion",
-                value=f"{events_conversion_rate:.2f}%", 
-                delta=f"sur {total_genii_conversations} conversations Genii"
-            )
-        else:
-            st.metric(
-                label="Taux de Conversion",
-                value="N/A",
-                delta="Total conversations Genii non spécifié"
-            )
-    
-    with col3:
         if performance.get('total_revenue', 0) > 0:
             st.metric(
                 label="Chiffre d'Affaires Total",
@@ -1737,7 +1673,7 @@ def display_conversion_performance_section(processor: ROIDataProcessor, conversi
                     delta=None
                 )
     
-    with col4:
+    with col3:
         if performance.get('average_price', 0) > 0:
             st.metric(
                 label="Panier Moyen",

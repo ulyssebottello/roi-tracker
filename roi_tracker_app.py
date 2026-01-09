@@ -555,97 +555,6 @@ def display_period_picker(processor: ROIDataProcessor) -> Tuple[datetime, dateti
     return start_datetime, end_datetime
 
 
-def display_global_metrics(processor: ROIDataProcessor, total_genii_conversations=None, conversion_events=None):
-    """Affiche les métriques globales (Niveau 1)"""
-    st.markdown('<div class="section-header">📊 Vue Généraliste - Métriques Globales</div>', 
-                unsafe_allow_html=True)
-    
-    metrics = processor.get_global_metrics()
-    
-    # Métriques principales
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric(
-            label="Total d'événements",
-            value=f"{metrics['total_events']:,}",
-            delta=None
-        )
-    
-    with col2:
-        st.metric(
-            label="Types d'événements uniques",
-            value=metrics['unique_events'],
-            delta=None
-        )
-    
-    with col3:
-        date_range = metrics['date_range']
-        if pd.notna(date_range[0]) and pd.notna(date_range[1]):
-            duration = (date_range[1] - date_range[0]).days
-            st.metric(
-                label="Période d'analyse",
-                value=f"{duration} jours",
-                delta=None
-            )
-    
-    with col4:
-        avg_events_per_day = metrics['total_events'] / max(duration, 1) if 'duration' in locals() else 0
-        st.metric(
-            label="Événements/jour (moy.)",
-            value=f"{avg_events_per_day:.1f}",
-            delta=None
-        )
-    
-    # Graphiques de répartition
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Répartition par type d'événement")
-        if not metrics['event_distribution'].empty:
-            fig_events = px.pie(
-                values=metrics['event_distribution'].values,
-                names=metrics['event_distribution'].index,
-                title="Distribution des événements"
-            )
-            fig_events.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig_events, use_container_width=True)
-    
-    with col2:
-        st.subheader("Répartition par type de valeur")
-        if not metrics['value_type_distribution'].empty:
-            fig_values = px.pie(
-                values=metrics['value_type_distribution'].values,
-                names=metrics['value_type_distribution'].index,
-                title="Distribution des types de valeurs"
-            )
-            fig_values.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig_values, use_container_width=True)
-    
-    # Évolution temporelle
-    st.subheader("Évolution temporelle des événements")
-    if processor.processed_data is not None:
-        # Grouper par jour complet pour éviter les points multiples dans la journée
-        daily_events = processor.processed_data.groupby(
-            processor.processed_data['date'].dt.date
-        ).size().reset_index()
-        daily_events.columns = ['date', 'count']
-        
-        # Convertir la date en datetime pour un meilleur affichage
-        daily_events['date'] = pd.to_datetime(daily_events['date'])
-        
-        fig_timeline = px.line(
-            daily_events, 
-            x='date', 
-            y='count',
-            title="Nombre d'événements par jour",
-            labels={'count': 'Nombre d\'événements', 'date': 'Date'}
-        )
-        # Configurer l'axe des dates intelligemment
-        configure_date_axis(fig_timeline, daily_events['date'])
-        st.plotly_chart(fig_timeline, use_container_width=True)
-
-
 def display_event_explorer(processor: ROIDataProcessor):
     """Affiche l'explorateur d'événements (Niveau 2)"""
     st.markdown('<div class="section-header">🔍 Explorateur d\'Événements</div>', 
@@ -877,48 +786,34 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
         
         # Répartition des prix si plusieurs valeurs
         if transaction_count > 1:
-            col1, col2 = st.columns(2)
+            st.subheader("💵 Répartition des Prix")
             
-            with col1:
-                st.subheader("💵 Répartition des Prix")
-                
-                # Utiliser un histogramme pour mieux visualiser la distribution avec outliers
-                fig_price_dist = px.histogram(
-                    price_data,
-                    x='value_numeric',
-                    title="Distribution des Prix",
-                    labels={'value_numeric': 'Prix (€)', 'count': 'Nombre de Transactions'},
-                    nbins=min(25, len(price_data) // 3)  # Adapter le nombre de bins
-                )
-                
-                # Améliorer la lisibilité
-                fig_price_dist.update_layout(
-                    height=450,
-                    showlegend=False,
-                    xaxis=dict(
-                        title="Prix (€)",
-                        showgrid=True,
-                        gridcolor='rgba(255,255,255,0.1)'
-                    ),
-                    yaxis=dict(
-                        title="Nombre de Transactions",
-                        showgrid=True,
-                        gridcolor='rgba(255,255,255,0.1)'
-                    )
-                )
-                
-                st.plotly_chart(fig_price_dist, use_container_width=True)
+            # Utiliser un histogramme pour mieux visualiser la distribution avec outliers
+            fig_price_dist = px.histogram(
+                price_data,
+                x='value_numeric',
+                title="Distribution des Prix",
+                labels={'value_numeric': 'Prix (€)', 'count': 'Nombre de Transactions'},
+                nbins=min(25, len(price_data) // 3)  # Adapter le nombre de bins
+            )
             
-            with col2:
-                st.subheader("📦 CA par Type d'Événement")
-                revenue_by_event = price_data.groupby('name')['value_numeric'].sum()
-                
-                fig_revenue_by_event = px.pie(
-                    values=revenue_by_event.values,
-                    names=revenue_by_event.index,
-                    title="Répartition du CA"
+            # Améliorer la lisibilité
+            fig_price_dist.update_layout(
+                height=450,
+                showlegend=False,
+                xaxis=dict(
+                    title="Prix (€)",
+                    showgrid=True,
+                    gridcolor='rgba(255,255,255,0.1)'
+                ),
+                yaxis=dict(
+                    title="Nombre de Transactions",
+                    showgrid=True,
+                    gridcolor='rgba(255,255,255,0.1)'
                 )
-                st.plotly_chart(fig_revenue_by_event, use_container_width=True)
+            )
+            
+            st.plotly_chart(fig_price_dist, use_container_width=True)
     
     # === ANALYSE GÉNÉRIQUE DES AUTRES CLÉS-VALEURS ===
     st.markdown("---")
@@ -952,120 +847,7 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
     else:
         st.info("Aucune métadonnée non-prix détectée dans les événements sélectionnés")
     
-    # === INFORMATIONS COMPLÉMENTAIRES ===
-    with st.expander("🔍 Détails des événements sélectionnés"):
-        st.write("**Répartition par événement:**")
-        # Utiliser unique_events pour compter correctement
-        event_counts = unique_events['name'].value_counts()
-        for event_name, count in event_counts.items():
-            percentage = (count / total_events) * 100
-            st.write(f"- **{event_name}**: {count} événements ({percentage:.1f}%)")
-        
-        st.write("**Types de valeurs présentes:**")
-        value_types = filtered_data['value_key'].value_counts()
-        for value_type, count in value_types.items():
-            st.write(f"- **{value_type}**: {count} occurrences")
     
-    # === DONNÉES COMPLÈTES FILTRÉES ===
-    st.markdown("---")
-    st.subheader("📋 Données complètes des événements sélectionnés")
-    
-    # Utiliser les données consolidées pour l'affichage
-    if hasattr(processor, 'consolidated_data') and processor.consolidated_data is not None:
-        # Filtrer les données consolidées par nom d'événement
-        consolidated_filtered = processor.consolidated_data[
-            processor.consolidated_data['name'].isin(selected_event_names)
-        ].copy()
-        
-        if not consolidated_filtered.empty:
-            # Formatage des dates pour un meilleur affichage
-            consolidated_filtered['date'] = pd.to_datetime(consolidated_filtered['date']).dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Tri par date (plus récent en haut)
-            consolidated_filtered = consolidated_filtered.sort_values('date', ascending=False)
-            
-            # Réorganisation des colonnes : colonnes de base puis colonnes de valeurs
-            base_columns = ['name', 'date', 'conversation_id']
-            value_columns = [col for col in consolidated_filtered.columns if col not in base_columns]
-            
-            # Réorganiser les colonnes de valeurs par paires (text, numeric)
-            organized_columns = base_columns.copy()
-            
-            # Grouper les colonnes par type de valeur
-            value_types = set()
-            for col in value_columns:
-                if col.endswith('_text') or col.endswith('_numeric'):
-                    value_type = col.replace('_text', '').replace('_numeric', '')
-                    value_types.add(value_type)
-            
-            # Ajouter les colonnes dans l'ordre : text puis numeric pour chaque type
-            for value_type in sorted(value_types):
-                text_col = f'{value_type}_text'
-                numeric_col = f'{value_type}_numeric'
-                if text_col in consolidated_filtered.columns:
-                    organized_columns.append(text_col)
-                if numeric_col in consolidated_filtered.columns:
-                    organized_columns.append(numeric_col)
-            
-            display_data = consolidated_filtered[organized_columns]
-            
-            # Renommage des colonnes pour plus de clarté
-            column_rename = {
-                'name': 'Nom Événement',
-                'date': 'Date',
-                'conversation_id': 'ID Conversation'
-            }
-            
-            # Renommer les colonnes de valeurs
-            for col in display_data.columns:
-                if col.endswith('_text'):
-                    value_type = col.replace('_text', '')
-                    column_rename[col] = f'{value_type.title()}'
-                elif col.endswith('_numeric'):
-                    value_type = col.replace('_numeric', '')
-                    column_rename[col] = f'{value_type.title()} (€)'
-            
-            display_data = display_data.rename(columns=column_rename)
-            
-            # Affichage du DataFrame avec des options d'interaction
-            st.write(f"**{len(display_data)} événements uniques affichés**")
-            
-            # Options d'affichage
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                show_all = st.checkbox("Afficher toutes les lignes", key="show_all_data")
-            
-            with col2:
-                if st.button("📥 Télécharger les données filtrées", key="download_filtered"):
-                    csv = display_data.to_csv(index=False)
-                    st.download_button(
-                        label="Télécharger CSV",
-                        data=csv,
-                        file_name=f"donnees_filtrees_{len(selected_event_names)}_evenements.csv",
-                        mime="text/csv"
-                    )
-            
-            # Affichage du DataFrame
-            if show_all:
-                st.dataframe(
-                    display_data,
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                # Affichage limité aux 50 premières lignes
-                st.dataframe(
-                    display_data.head(50),
-                    use_container_width=True,
-                    hide_index=True
-                )
-                if len(display_data) > 50:
-                    st.info(f"Affichage limité aux 50 premières lignes. Cochez 'Afficher toutes les lignes' pour voir les {len(display_data)} lignes complètes.")
-        else:
-            st.warning("Aucune donnée consolidée trouvée pour les événements sélectionnés")
-    else:
-        st.error("Données consolidées non disponibles")
 
 
 def display_value_key_analysis(filtered_data: pd.DataFrame, value_key: str):
@@ -1162,48 +944,6 @@ def display_value_key_analysis(filtered_data: pd.DataFrame, value_key: str):
         hide_index=True
     )
     
-    # Graphique si plus d'une valeur
-    if len(value_counts) > 1:
-        if has_associated_prices and total_revenue_all > 0:
-            # Double graphique : occurrences et CA
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Pie chart pour les occurrences
-                fig_occurrences = px.pie(
-                    values=value_counts.values,
-                    names=value_counts.index,
-                    title=f"Répartition par Occurrences",
-                    height=300
-                )
-                fig_occurrences.update_traces(textposition='inside', textinfo='percent+label')
-                fig_occurrences.update_layout(showlegend=False)
-                st.plotly_chart(fig_occurrences, use_container_width=True)
-            
-            with col2:
-                # Pie chart pour le CA
-                revenue_values = [price_by_metadata.get(name, 0) for name in value_counts.index]
-                fig_revenue = px.pie(
-                    values=revenue_values,
-                    names=value_counts.index,
-                    title=f"Répartition par CA (€)",
-                    height=300
-                )
-                fig_revenue.update_traces(textposition='inside', textinfo='percent+label')
-                fig_revenue.update_layout(showlegend=False)
-                st.plotly_chart(fig_revenue, use_container_width=True)
-        else:
-            # Pie chart simple pour la répartition
-            fig = px.pie(
-                values=value_counts.values,
-                names=value_counts.index,
-                title=f"Répartition - {value_key.title().replace('_', ' ')}",
-                height=300
-            )
-            fig.update_traces(textposition='inside', textinfo='percent+label')
-            fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
-    
     # Top des valeurs par CA si applicable
     if has_associated_prices and total_revenue_all > 0 and len(value_counts) > 1:
         st.write("💰 **Top par Chiffre d'Affaires:**")
@@ -1218,31 +958,23 @@ def display_value_key_analysis(filtered_data: pd.DataFrame, value_key: str):
         ranking_col1, ranking_col2 = st.columns(2)
         
         with ranking_col1:
-            st.write("**🥇 Meilleur CA:**")
-            best_value, best_revenue = revenue_ranking[0]
-            best_count = value_counts[best_value]
-            st.write(f"• **{best_value}**: {best_revenue:,.2f}€ ({best_count} occurrences)".replace(',', ' '))
+            st.write("**🏆 Top 3 CA:**")
+            medals = ["🥇", "🥈", "🥉"]
+            for i, (value, revenue) in enumerate(revenue_ranking[:3]):
+                count = value_counts[value]
+                medal = medals[i] if i < len(medals) else "•"
+                st.write(f"{medal} **{value}**: {revenue:,.2f}€ ({count} occurrences)".replace(',', ' '))
         
         with ranking_col2:
             if len(revenue_ranking) > 1:
                 st.write("**📈 Panier moyen par valeur:**")
-                for value, revenue in revenue_ranking:
-                    count = value_counts[value]
-                    avg_basket = revenue / count if count > 0 else 0
-                    st.write(f"• **{value}**: {avg_basket:,.2f}€/transaction".replace(',', ' '))
+                # Container avec scroll pour les longues listes
+                with st.container(height=200):
+                    for value, revenue in revenue_ranking:
+                        count = value_counts[value]
+                        avg_basket = revenue / count if count > 0 else 0
+                        st.write(f"• **{value}**: {avg_basket:,.2f}€/transaction".replace(',', ' '))
     
-    # Informations complémentaires si valeurs numériques détectées
-    numeric_data = key_data.dropna(subset=['value_numeric'])
-    if not numeric_data.empty:
-        st.write("📊 **Statistiques numériques détectées:**")
-        numeric_col1, numeric_col2, numeric_col3 = st.columns(3)
-        
-        with numeric_col1:
-            st.metric("Minimum", f"{numeric_data['value_numeric'].min():.2f}")
-        with numeric_col2:
-            st.metric("Moyenne", f"{numeric_data['value_numeric'].mean():.2f}")
-        with numeric_col3:
-            st.metric("Maximum", f"{numeric_data['value_numeric'].max():.2f}")
 
 
 def display_detailed_analysis(processor: ROIDataProcessor, selected_events: List[str]):
@@ -1419,7 +1151,7 @@ def display_custom_analysis(event: str, analysis: Dict):
         st.plotly_chart(fig_custom, use_container_width=True)
 
 
-def analyze_conversion_performance(processor: ROIDataProcessor, conversion_events, total_genii_conversations=None) -> Dict:
+def analyze_conversion_performance(processor: ROIDataProcessor, conversion_events) -> Dict:
     """Analyse complète de la performance des événements de conversion sélectionnés"""
     
     # Gestion de liste ou d'un seul événement
@@ -1461,11 +1193,7 @@ def analyze_conversion_performance(processor: ROIDataProcessor, conversion_event
         'analysis_mode': 'direct_prices' if not conversion_with_prices.empty else 'price_tracking'
     }
     
-    # 4. Calcul du taux de conversion si total Genii fourni
-    if total_genii_conversations and total_genii_conversations > 0:
-        result['conversion_rate'] = (len(valid_conversations) / total_genii_conversations) * 100
-    
-    # 5. Analyse selon le mode détecté
+    # 4. Analyse selon le mode détecté
     if result['analysis_mode'] == 'direct_prices':
         # Mode prix directs
         total_revenue = conversion_with_prices['value_numeric'].sum()
@@ -1618,7 +1346,7 @@ def analyze_conversion_tracking(processor: ROIDataProcessor, conversion_events) 
     }
 
 
-def display_conversion_performance_section(processor: ROIDataProcessor, conversion_events, total_genii_conversations=None):
+def display_conversion_performance_section(processor: ROIDataProcessor, conversion_events):
     """Affiche la section de performance de conversion (prioritaire après configuration)"""
     
     if not conversion_events:
@@ -1631,7 +1359,7 @@ def display_conversion_performance_section(processor: ROIDataProcessor, conversi
                 unsafe_allow_html=True)
     
     with st.spinner("Analyse des performances de conversion..."):
-        performance = analyze_conversion_performance(processor, events_list, total_genii_conversations)
+        performance = analyze_conversion_performance(processor, events_list)
     
     if 'error' in performance:
         st.error(f"❌ {performance['error']}")
@@ -1739,256 +1467,6 @@ def display_conversion_performance_section(processor: ROIDataProcessor, conversi
         st.info("💡 Cet événement de conversion ne contient pas de prix et aucun prix n'a pu être identifié dans les événements précédents des conversations.")
 
 
-def display_conversion_analysis(processor: ROIDataProcessor):
-    """Affiche l'interface d'analyse de conversion (Niveau 1.5 - entre général et spécialisé)"""
-    st.markdown('<div class="section-header">🎯 Analyse de Conversion - Tracking du Dernier Prix</div>', 
-                unsafe_allow_html=True)
-    
-    # Utiliser les données actives (filtrées ou complètes)
-    active_data = processor.get_active_data()
-    
-    # Menu déroulant pour sélectionner l'événement de conversion
-    available_events = sorted(active_data['name'].unique())
-    
-    if not available_events:
-        st.warning("Aucun événement trouvé dans les données")
-        return
-    
-    st.subheader("🎯 Sélection de l'événement de conversion finale")
-    st.write("Sélectionnez l'événement qui marque la conversion réussie (ex: 'Step 4, Conversion', 'Purchase Complete', etc.)")
-    
-    selected_conversion = st.selectbox(
-        "Événement de conversion :",
-        options=["Sélectionnez un événement..."] + available_events,
-        index=0,
-        help="L'événement qui confirme qu'une transaction/conversion a été réalisée"
-    )
-    
-    
-    if selected_conversion and selected_conversion != "Sélectionnez un événement...":
-        # Analyse automatique
-        with st.spinner("Analyse des conversions en cours..."):
-            analysis_result = analyze_conversion_tracking(processor, selected_conversion)
-        
-        if 'error' in analysis_result:
-            st.error(f"❌ {analysis_result['error']}")
-            return
-        
-        # === MÉTRIQUES PRINCIPALES ===
-        st.subheader("📊 Résultats de l'analyse de conversion")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric(
-                label="Conversions avec Prix Identifiable",
-                value=f"{analysis_result['successful_conversions']:,}",
-                delta=f"sur {analysis_result['total_conversations']} conversations"
-            )
-        
-        with col2:
-            st.metric(
-                label="Chiffre d'Affaires Total",
-                value=f"{analysis_result['total_revenue']:,.2f}€".replace(',', ' '),
-                delta=None
-            )
-        
-        with col3:
-            st.metric(
-                label="Panier Moyen",
-                value=f"{analysis_result['average_price']:,.2f}€".replace(',', ' '),
-                delta=None
-            )
-        
-        # === GRAPHIQUE D'ÉVOLUTION CUMULATIVE ===
-        st.subheader("📈 Évolution du Chiffre d'Affaires Cumulé")
-        
-        analysis_df = analysis_result['analysis_data']
-        
-        # Grouper les conversions par jour complet pour éviter les points multiples dans la journée
-        daily_conversions = analysis_df.copy()
-        daily_conversions['conversion_date_day'] = daily_conversions['conversion_date'].dt.date
-        
-        # Agréger par jour : sommer les prix et compter les conversions
-        daily_revenue = daily_conversions.groupby('conversion_date_day').agg({
-            'last_price': 'sum',  # Somme des revenus du jour
-            'conversation_id': 'count'  # Nombre de conversions du jour
-        }).reset_index()
-        daily_revenue.columns = ['date', 'daily_revenue', 'daily_conversions']
-        
-        # Convertir la date en datetime pour un meilleur affichage
-        daily_revenue['date'] = pd.to_datetime(daily_revenue['date'])
-        
-        # Calculer le CA cumulé par jour
-        daily_revenue = daily_revenue.sort_values('date')
-        daily_revenue['cumulative_revenue'] = daily_revenue['daily_revenue'].cumsum()
-        
-        # Graphique principal : évolution cumulative
-        fig_cumulative = go.Figure()
-        
-        # Ligne cumulative
-        fig_cumulative.add_trace(go.Scatter(
-            x=daily_revenue['date'],
-            y=daily_revenue['cumulative_revenue'].round(2),
-            mode='lines+markers',
-            name='CA Cumulé',
-            line=dict(color='#1f77b4', width=3),
-            marker=dict(size=8, color='#1f77b4'),
-            hovertemplate='<b>%{x}</b><br>' +
-                         'CA cumulé: €%{y:,.2f}<br>' +
-                         '<extra></extra>'
-        ))
-        
-        # Ajout des points de conversion quotidiens
-        fig_cumulative.add_trace(go.Scatter(
-            x=daily_revenue['date'],
-            y=daily_revenue['daily_revenue'].round(2),
-            mode='markers',
-            name='CA quotidien',
-            marker=dict(size=10, color='red', symbol='diamond'),
-            hovertemplate='<b>%{x}</b><br>' +
-                         'CA du jour: €%{y:,.2f}<br>' +
-                         'Conversions: %{customdata}<br>' +
-                         '<extra></extra>',
-            customdata=daily_revenue['daily_conversions']
-        ))
-        
-        fig_cumulative.update_layout(
-            title=f"Évolution du CA pour les conversions '{selected_conversion}' (par jour)",
-            xaxis_title="Date de conversion",
-            yaxis_title="Montant (€)",
-            hovermode='x unified',
-            height=500
-        )
-        
-        # Configurer l'axe des dates intelligemment
-        configure_date_axis(fig_cumulative, daily_revenue['date'])
-        
-        st.plotly_chart(fig_cumulative, use_container_width=True)
-        
-        # === GRAPHIQUES SECONDAIRES ===
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("💰 Distribution des Prix")
-            
-            if len(analysis_result['price_distribution']) > 1:
-                analysis_df = analysis_result['analysis_data']
-                
-                # Créer l'histogramme
-                fig_price_dist = px.histogram(
-                    analysis_df,
-                    x='last_price',
-                    title="Distribution des derniers prix avant conversion",
-                    labels={'last_price': 'Prix (€)', 'count': 'Nombre de conversions'},
-                    nbins=min(30, len(analysis_df) // 2)  # Adapter le nombre de bins
-                )
-                
-                # Améliorer la lisibilité
-                fig_price_dist.update_layout(
-                    height=500,
-                    showlegend=False,
-                    xaxis=dict(
-                        title="Prix (€)",
-                        showgrid=True,
-                        gridcolor='rgba(255,255,255,0.1)'
-                    ),
-                    yaxis=dict(
-                        title="Nombre de conversions",
-                        showgrid=True,
-                        gridcolor='rgba(255,255,255,0.1)'
-                    )
-                )
-                
-                st.plotly_chart(fig_price_dist, use_container_width=True)
-                    
-            else:
-                st.info("Tous les prix de conversion sont identiques")
-        
-        with col2:
-            st.subheader("⏱️ Temps jusqu'à conversion")
-            
-            if analysis_result['avg_time_to_conversion'] > 0:
-                # Histogramme du temps jusqu'à conversion
-                fig_time_dist = px.histogram(
-                    analysis_df,
-                    x='time_to_conversion',
-                    title="Temps entre dernier prix et conversion",
-                    labels={'time_to_conversion': 'Minutes', 'count': 'Nombre de conversions'},
-                    nbins=20
-                )
-                fig_time_dist.update_layout(height=400)
-                st.plotly_chart(fig_time_dist, use_container_width=True)
-                
-                # Métrique temps moyen
-                st.metric(
-                    label="Temps moyen jusqu'à conversion",
-                    value=f"{analysis_result['avg_time_to_conversion']:.1f}min"
-                )
-            else:
-                st.info("Temps de conversion instantané")
-        
-        # === DÉTAILS COMPLÉMENTAIRES ===
-        with st.expander(f"🔍 Détails des conversions pour '{selected_conversion}'"):
-            st.write("**Résumé de l'analyse :**")
-            st.write(f"• **{analysis_result['total_conversations']}** conversations uniques contiennent l'événement '{selected_conversion}'")
-            st.write(f"• **{analysis_result['successful_conversions']}** de ces conversations ont un prix identifiable avant la conversion")
-            
-            # Calcul du nombre d'événements totaux pour comparaison
-            active_data = processor.get_active_data()
-            total_events = len(active_data[active_data['name'] == selected_conversion])
-            
-            if total_events > analysis_result['total_conversations']:
-                st.write(f"• **{total_events}** événements de conversion au total (certaines conversations en ont plusieurs)")
-            
-            excluded_conversations = analysis_result['total_conversations'] - analysis_result['successful_conversions']
-            if excluded_conversations > 0:
-                st.write(f"• **{excluded_conversations}** conversations exclues (pas de prix identifiable ou ID conversation manquant)")
-                
-            st.write(f"• **Chiffre d'affaires total** : {analysis_result['total_revenue']:,.2f}€".replace(',', ' '))
-            st.write(f"• **Prix moyen** : {analysis_result['average_price']:,.2f}€".replace(',', ' '))
-            
-            # Tableau détaillé des conversions
-            st.write("**📋 Détail des conversions :**")
-            
-            # Formatage du DataFrame pour affichage
-            display_df = analysis_df.copy()
-            display_df['conversion_date'] = display_df['conversion_date'].dt.strftime('%Y-%m-%d %H:%M:%S')
-            display_df['last_price_date'] = display_df['last_price_date'].dt.strftime('%Y-%m-%d %H:%M:%S')
-            display_df['time_to_conversion'] = display_df['time_to_conversion'].round(2)
-            
-            # Renommage des colonnes
-            display_df = display_df.rename(columns={
-                'conversation_id': 'ID Conversation',
-                'conversion_date': 'Date Conversion',
-                'last_price': 'Dernier Prix (€)',
-                'last_price_date': 'Date Dernier Prix',
-                'last_price_event': 'Événement du Prix',
-                'time_to_conversion': 'Temps jusqu\'à Conversion (min)',
-                'cumulative_revenue': 'CA Cumulé (€)'
-            })
-            
-            # Réorganisation des colonnes
-            column_order = ['ID Conversation', 'Dernier Prix (€)', 'Date Dernier Prix', 
-                          'Événement du Prix', 'Date Conversion', 'Temps jusqu\'à Conversion (min)', 'CA Cumulé (€)']
-            display_df = display_df[column_order]
-            
-            st.dataframe(
-                display_df,
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Option de téléchargement
-            csv = display_df.to_csv(index=False)
-            st.download_button(
-                label="📥 Télécharger les détails",
-                data=csv,
-                file_name=f"conversion_analysis_{selected_conversion.replace(' ', '_')}.csv",
-                mime="text/csv"
-            )
-
-
 def main():
     """Fonction principale de l'application"""
     
@@ -2025,37 +1503,21 @@ def main():
                 processor.apply_date_filter(start_date, end_date)
                 
                 # === CONFIGURATION GENII ===
-                col1, col2 = st.columns(2)
+                # Multi-select pour les événements de conversion finale
+                active_data = processor.get_active_data()
+                available_events = sorted(active_data['name'].unique()) if not active_data.empty else []
                 
-                with col1:
-                    # Champ pour le nombre total de conversations Genii
-                    total_genii_conversations = st.number_input(
-                        "Nombre total de conversations Genii sur la période",
-                        min_value=0,
-                        value=st.session_state.get('total_genii_conversations', 0),
-                        step=1,
-                        help="Saisissez le nombre total de conversations sur votre système Genii pour la période sélectionnée"
+                if available_events:
+                    genii_conversion_events = st.multiselect(
+                        "Événement(s) de conversion finale",
+                        options=available_events,
+                        default=[],
+                        key="genii_conversion_events",
+                        help="Sélectionnez un ou plusieurs événements qui marquent une conversion réussie"
                     )
-                    
-                    # Sauvegarder dans la session
-                    st.session_state['total_genii_conversations'] = total_genii_conversations
-                
-                with col2:
-                    # Multi-select pour les événements de conversion finale
-                    active_data = processor.get_active_data()
-                    available_events = sorted(active_data['name'].unique()) if not active_data.empty else []
-                    
-                    if available_events:
-                        genii_conversion_events = st.multiselect(
-                            "Événement(s) de conversion finale",
-                            options=available_events,
-                            default=[],
-                            key="genii_conversion_events",
-                            help="Sélectionnez un ou plusieurs événements qui marquent une conversion réussie"
-                        )
-                    else:
-                        genii_conversion_events = []
-                        st.warning("Aucun événement disponible dans les données")
+                else:
+                    genii_conversion_events = []
+                    st.warning("Aucun événement disponible dans les données")
                 
                 # Séparateur après configuration
                 st.markdown("---")
@@ -2064,22 +1526,11 @@ def main():
                 if genii_conversion_events:
                     display_conversion_performance_section(
                         processor,
-                        genii_conversion_events,
-                        total_genii_conversations if total_genii_conversations > 0 else None
+                        genii_conversion_events
                     )
                     
-                    # Séparateur avant métriques globales
+                    # Séparateur avant explorateur
                     st.markdown("---")
-                
-                # Affichage des métriques globales (avec données filtrées et paramètres Genii)
-                display_global_metrics(
-                    processor, 
-                    total_genii_conversations if total_genii_conversations > 0 else None,
-                    genii_conversion_events if genii_conversion_events else None
-                )
-                
-                # Affichage de l'analyse de conversion (nouveau niveau intermédiaire)
-                display_conversion_analysis(processor)
                 
                 # Affichage de l'explorateur d'événements
                 display_event_explorer(processor)

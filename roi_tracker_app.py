@@ -829,21 +829,22 @@ def display_event_name_analysis(processor: ROIDataProcessor, selected_event_name
     if non_price_keys:
         st.write(f"**Analyse détaillée des {len(non_price_keys)} types de métadonnées détectées**")
         
-        # Créer des onglets ou colonnes selon le nombre de clés
-        if len(non_price_keys) <= 3:
-            # Si 3 clés ou moins, utiliser des colonnes
-            cols = st.columns(len(non_price_keys))
-            
-            for idx, value_key in enumerate(sorted(non_price_keys)):
-                with cols[idx]:
-                    display_value_key_analysis(filtered_data, value_key)
-        else:
-            # Si plus de 3 clés, utiliser des onglets
-            tabs = st.tabs([f"📊 {key.title()}" for key in sorted(non_price_keys)])
-            
-            for idx, value_key in enumerate(sorted(non_price_keys)):
-                with tabs[idx]:
-                    display_value_key_analysis(filtered_data, value_key)
+        with st.spinner("Chargement de l'analyse des métadonnées..."):
+            # Créer des onglets ou colonnes selon le nombre de clés
+            if len(non_price_keys) <= 3:
+                # Si 3 clés ou moins, utiliser des colonnes
+                cols = st.columns(len(non_price_keys))
+                
+                for idx, value_key in enumerate(sorted(non_price_keys)):
+                    with cols[idx]:
+                        display_value_key_analysis(filtered_data, value_key)
+            else:
+                # Si plus de 3 clés, utiliser des onglets
+                tabs = st.tabs([f"📊 {key.title()}" for key in sorted(non_price_keys)])
+                
+                for idx, value_key in enumerate(sorted(non_price_keys)):
+                    with tabs[idx]:
+                        display_value_key_analysis(filtered_data, value_key)
     else:
         st.info("Aucune métadonnée non-prix détectée dans les événements sélectionnés")
     
